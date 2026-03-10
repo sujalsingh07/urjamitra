@@ -1,0 +1,16 @@
+node_modules/
+*/node_modules/
+
+# Environment variables — NEVER upload these
+.env
+*/.env
+
+# Build files
+frontend/build/
+frontend/.DS_Store
+backend/.DS_Store
+.DS_Store
+
+# Logs
+*.log
+npm-debug.log*
