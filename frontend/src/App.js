@@ -5,6 +5,7 @@ import Marketplace from './pages/Marketplace';
 import MapView from './pages/MapView';
 import Transactions from './pages/Transactions';
 import Navbar from './components/Navbar';
+import 'leaflet/dist/leaflet.css';
 
 function App() {
 

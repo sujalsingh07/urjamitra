@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import CampusMap from "../components/CampusMap";
 
 const stats = [
   { label: 'Energy Generated', value: '12.4 kWh', icon: '☀️', color: 'bg-yellow-50 border-yellow-200' },
@@ -86,6 +87,12 @@ function Dashboard() {
             <div className="text-xs text-green-100">CO₂ Reduced</div>
           </div>
         </div>
+      </div>
+
+      {/* Community Energy Map */}
+      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 mb-8">
+        <h2 className="font-bold text-gray-800 mb-4">📍 Community Energy Map</h2>
+        <CampusMap />
       </div>
 
       {/* Action Buttons */}

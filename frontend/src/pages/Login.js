@@ -21,8 +21,8 @@ function Login() {
     try {
       // Choose endpoint based on login or signup
       const endpoint = isLogin
-        ? 'http://localhost:5001/api/auth/login'
-        : 'http://localhost:5001/api/auth/signup';
+      ? 'http://localhost:5000/api/auth/login'
+      : 'http://localhost:5000/api/auth/signup';
 
       // Send data to backend
       const response = await axios.post(endpoint, form);
