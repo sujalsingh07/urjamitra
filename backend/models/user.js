@@ -6,6 +6,17 @@ const userSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true, lowercase: true },
   password: { type: String, required: true },
   address: { type: String, required: true },
+  wallet: { type: Number, default: 0 }, // Balance in rupees
+  totalEnergyGenerated: { type: Number, default: 0 }, // in kWh
+  totalEnergyShared: { type: Number, default: 0 }, // in kWh
+  totalEnergySold: { type: Number, default: 0 }, // in kWh
+  totalEnergyBought: { type: Number, default: 0 }, // in kWh
+  totalEarnings: { type: Number, default: 0 }, // in rupees
+  rating: { type: Number, default: 5, min: 1, max: 5 },
+  reviewCount: { type: Number, default: 0 },
+  co2Saved: { type: Number, default: 0 }, // in kg
+  transactions: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Transaction' }],
+  listings: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Listing' }],
   createdAt: { type: Date, default: Date.now }
 });
 
