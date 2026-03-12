@@ -1,43 +1,50 @@
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, useLocation } from 'react-router-dom';
+import { AnimatePresence } from 'framer-motion';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import Marketplace from './pages/Marketplace';
 import MapView from './pages/MapView';
 import Transactions from './pages/Transactions';
-import Navbar from './components/Navbar';
+import Layout from './components/Layout';
+import PageTransition from './components/PageTransition';
 import 'leaflet/dist/leaflet.css';
 
-function App() {
+function AnimatedRoutes() {
+  const location = useLocation();
 
   return (
-    <Router>
-      <Routes>
-        <Route path="/" element={<Login />} />
+    <AnimatePresence mode="wait">
+      <Routes location={location} key={location.pathname}>
+        <Route path="/" element={<PageTransition><Login /></PageTransition>} />
         <Route path="/dashboard" element={
-          <>
-            <Navbar />
-            <Dashboard />
-          </>
+          <Layout>
+            <PageTransition><Dashboard /></PageTransition>
+          </Layout>
         } />
         <Route path="/marketplace" element={
-          <>
-            <Navbar />
-            <Marketplace />
-          </>
+          <Layout>
+            <PageTransition><Marketplace /></PageTransition>
+          </Layout>
         } />
         <Route path="/map" element={
-          <>
-            <Navbar />
-            <MapView />
-          </>
+          <Layout>
+            <PageTransition><MapView /></PageTransition>
+          </Layout>
         } />
         <Route path="/transactions" element={
-          <>
-            <Navbar />
-            <Transactions />
-          </>
+          <Layout>
+            <PageTransition><Transactions /></PageTransition>
+          </Layout>
         } />
       </Routes>
+    </AnimatePresence>
+  );
+}
+
+function App() {
+  return (
+    <Router>
+      <AnimatedRoutes />
     </Router>
   );
 }

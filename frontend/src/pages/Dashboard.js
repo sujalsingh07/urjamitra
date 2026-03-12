@@ -1,205 +1,514 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import CampusMap from "../components/CampusMap";
 
-const stats = [
-  { label: 'Energy Generated', value: '12.4 kWh', icon: '☀️', color: 'bg-yellow-50 border-yellow-200' },
-  { label: 'Energy Shared', value: '8.2 kWh', icon: '⚡', color: 'bg-green-50 border-green-200' },
-  { label: 'Money Earned', value: '₹164', icon: '💰', color: 'bg-blue-50 border-blue-200' },
-  { label: 'CO₂ Saved', value: '6.5 kg', icon: '🌍', color: 'bg-purple-50 border-purple-200' },
-];
+const CSS = `
+  @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800;900&family=Playfair+Display:wght@700;900&display=swap');
+  @keyframes fadeUp    { from{opacity:0;transform:translateY(18px)} to{opacity:1;transform:translateY(0)} }
+  @keyframes slideUp   { from{transform:translateY(100%)} to{transform:translateY(0)} }
+  @keyframes blink     { 0%,100%{opacity:1} 50%{opacity:0.3} }
+  @keyframes barGrow   { from{width:0%} to{width:var(--w)} }
+  @keyframes sunBob    { 0%,100%{transform:translateY(0) rotate(-3deg)} 50%{transform:translateY(-10px) rotate(3deg)} }
+  @keyframes sunGlow   { 0%,100%{filter:drop-shadow(0 4px 16px rgba(245,158,11,0.5))} 50%{filter:drop-shadow(0 4px 36px rgba(245,158,11,0.9))} }
+  @keyframes raysSpin  { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
+  @keyframes eyeBlink  { 0%,88%,100%{transform:scaleY(1)} 94%{transform:scaleY(0.08)} }
+  @keyframes cheekPop  { 0%,100%{opacity:0.5;transform:scale(1)} 50%{opacity:0.9;transform:scale(1.2)} }
+  @keyframes smileWig  { 0%,100%{transform:scaleX(1) translateX(0)} 50%{transform:scaleX(1.1) translateX(1px)} }
+  
+  /* Missing keyframes restored here: */
+  @keyframes fadeInDown { from{opacity:0;transform:translateY(-10px)} to{opacity:1;transform:translateY(0)} }
+  @keyframes growUp    { from { height: 0; opacity: 0; } to { opacity: 1; } }
+
+  /* Sidebar Styles */
+  .um-sidebar { width: 280px; background: #fffdf5; border-right: 1.5px solid #fde68a; height: 100vh; display: flex; flex-direction: column; padding: 32px 0 24px; z-index: 40; transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1); flex-shrink: 0; }
+  .sidebar-link { display: flex; align-items: center; gap: 14px; padding: 14px 28px; color: #92400e; font-weight: 700; font-size: 15px; text-decoration: none; transition: all 0.2s; border-right: 4px solid transparent; cursor: pointer; margin-bottom: 4px; }
+  .sidebar-link:hover { background: rgba(245,158,11,0.08); color: #b45309; }
+  .sidebar-link.active { background: linear-gradient(90deg, rgba(253,230,138,0.3), rgba(253,230,138,0.1)); border-right-color: #f59e0b; color: #d97706; }
+  .sidebar-logo { display:flex; align-items:center; gap:12px; padding:0 28px; margin-bottom:48px; }
+  
+  .um-sidebar-overlay { display: none; position: fixed; inset: 0; background: rgba(120,80,0,0.4); z-index: 30; backdrop-filter: blur(4px); animation: fadeIn 0.3s ease; }
+  .mobile-menu-btn { display: none; background: rgba(255,255,255,0.85); border: 1.5px solid #fde68a; border-radius: 12px; width: 44px; height: 44px; cursor: pointer; color: #92400e; align-items: center; justify-content: center; backdrop-filter: blur(8px); box-shadow: 0 4px 12px rgba(180,130,0,0.1); position: absolute; top: 24px; left: 24px; z-index: 20; transition: transform 0.2s, background 0.2s; }
+  .mobile-menu-btn:hover { background: #fffbeb; transform: scale(1.05); }
+  
+  @media (max-width: 900px) {
+    .um-sidebar { position: fixed; left: 0; top: 0; transform: translateX(-100%); width: 280px; background: #fffdf5; box-shadow: 12px 0 40px rgba(180,130,0,0.15); }
+    .um-sidebar.open { transform: translateX(0); }
+    .um-sidebar-overlay { display: block; }
+    .mobile-menu-btn { display: flex; }
+    .header-content-inner { padding-left: 64px !important; }
+  }
+  @keyframes fadeIn { from{opacity:0} to{opacity:1} }
+
+  /* Premium Glassmorphism & Native Physics */
+  .um-card { 
+    transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+    background: rgba(255, 255, 255, 0.65) !important;
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border: 1px solid rgba(255,255,255,0.8) !important;
+  }
+  .um-card:hover { 
+    transform: translateY(-4px) scale(1.01); 
+    box-shadow: 0 24px 48px rgba(180,130,0,0.08), 0 0 0 1px rgba(255,255,255,1) !important; 
+    z-index: 10; 
+  }
+  .um-card-icon { transition: transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1); }
+  .um-card:hover .um-card-icon { transform: scale(1.12) rotate(4deg); }
+
+  .um-row { transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1); cursor: pointer; border-radius: 12px; }
+  .um-row:hover { background: rgba(255,255,255,0.8) !important; transform: translateX(6px); box-shadow: -4px 0 0 #f59e0b; }
+  
+  input[type=number]::-webkit-inner-spin-button { -webkit-appearance:none; }
+  
+  .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+  @media (max-width: 900px) { .stats-grid { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 480px) { .stats-grid { grid-template-columns: 1fr; } }
+  
+  .two-col-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  @media (max-width: 768px) { .two-col-grid { grid-template-columns: 1fr; } }
+
+  .three-col-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  @media (max-width: 768px) { .three-col-grid { grid-template-columns: 1fr; } }
+  
+  .header-content { display: flex; justify-content: space-between; align-items: flex-start; }
+  @media (max-width: 600px) { .header-content { flex-direction: column-reverse; gap: 24px; align-items: center; text-align: center; } }
+  
+  @keyframes shine { 100% { left: 150%; } }
+  .gradient-btn { background: linear-gradient(135deg, #f59e0b, #ea580c); color: #fff; border: none; border-radius: 20px; padding: 18px 24px; font-weight: 800; font-size: 15px; letter-spacing: -0.2px; cursor: pointer; transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1); box-shadow: 0 8px 24px rgba(234, 88, 12, 0.25), inset 0 1px 1px rgba(255,255,255,0.4); display: flex; align-items: center; justify-content: center; gap: 10px; position: relative; overflow: hidden; }
+  .gradient-btn::after { content: ''; position: absolute; top: 0; left: -100%; width: 50%; height: 100%; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent); transform: skewX(-20deg); transition: 0s; }
+  .gradient-btn:hover { transform: translateY(-4px) scale(1.02); box-shadow: 0 16px 32px rgba(234, 88, 12, 0.35); }
+  .gradient-btn:hover::after { animation: shine 0.7s cubic-bezier(0.16, 1, 0.3, 1); }
+  
+  .ghost-btn { background: rgba(255,255,255,0.7); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); color: #9A3412; border: 1.5px solid rgba(253,230,138,0.8); border-radius: 20px; padding: 18px 24px; font-weight: 800; font-size: 15px; letter-spacing: -0.2px; cursor: pointer; transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1); display: flex; align-items: center; justify-content: center; gap: 10px; }
+  .ghost-btn:hover { background: #fff; border-color: #f59e0b; transform: translateY(-4px) scale(1.02); box-shadow: 0 16px 32px rgba(253, 230, 138, 0.4); }
+`;
+
+function CountUp({ end, prefix = '', suffix = '', decimals = 0, duration = 1200 }) {
+  const [val, setVal] = useState(0);
+
+  useEffect(() => {
+    let start;
+    const step = (timestamp) => {
+      if (!start) start = timestamp;
+      const progress = Math.min((timestamp - start) / duration, 1);
+      const ease = 1 - Math.pow(1 - progress, 3);
+      setVal(ease * end);
+      if (progress < 1) window.requestAnimationFrame(step);
+    };
+    window.requestAnimationFrame(step);
+  }, [end, duration]);
+
+  const displayVal = decimals ? val.toFixed(decimals) : Math.round(val);
+  return <span>{prefix}{displayVal}{suffix}</span>;
+}
 
 const recentActivity = [
-  { type: 'sold', desc: 'Sold 2 kWh to House #14B', time: 'Today, 9:12 AM', amount: '+₹36' },
-  { type: 'bought', desc: 'Bought 1 kWh from Sunita', time: 'Yesterday, 6:45 PM', amount: '-₹18' },
-  { type: 'sold', desc: 'Sold 3 kWh to Flat 4B', time: 'Yesterday, 2:30 PM', amount: '+₹54' },
-  { type: 'bought', desc: 'Bought 2 kWh from Anil', time: '2 days ago', amount: '-₹32' },
+  { type: 'sold', desc: 'House #14B', sub: '2 kWh sold', time: 'Today, 9:12 AM', amount: '+₹36' },
+  { type: 'bought', desc: 'Sunita R.', sub: '1 kWh bought', time: 'Yesterday, 6:45 PM', amount: '-₹18' },
+  { type: 'sold', desc: 'Flat 4B', sub: '3 kWh sold', time: 'Yesterday, 2:30 PM', amount: '+₹54' },
+  { type: 'bought', desc: 'Anil Kumar', sub: '2 kWh bought', time: '2 days ago', amount: '-₹32' },
 ];
 
-function Dashboard() {
-  const navigate = useNavigate();
-  const [showModal, setShowModal] = useState(false);
-  const [listing, setListing] = useState({ units: '', price: '' });
-  const user = JSON.parse(localStorage.getItem('user')) || { name: 'User' };
+const weekly = [
+  { d: 'M', g: 10, s: 6 }, { d: 'T', g: 14, s: 9 }, { d: 'W', g: 8, s: 4 },
+  { d: 'T', g: 16, s: 11 }, { d: 'F', g: 12, s: 8 }, { d: 'S', g: 18, s: 13 }, { d: 'S', g: 15, s: 10 },
+];
 
+function SunIcon({ size = 72 }) {
+  const r = size / 2;
+  const numRays = 12;
   return (
-    <div className="max-w-6xl mx-auto px-6 py-8">
-
-      {/* Greeting */}
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-gray-800">
-          Good morning, {user.name}! ☀️
-        </h1>
-        <p className="text-gray-500 text-sm mt-1">
-          Tuesday, 10 March 2026 • Pune, Maharashtra
-        </p>
-      </div>
-
-      {/* Stats Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-        {stats.map((stat) => (
-          <div
-            key={stat.label}
-            className={`border-2 rounded-xl p-4 ${stat.color}`}
-          >
-            <div className="text-2xl mb-2">{stat.icon}</div>
-            <div className="text-xl font-bold text-gray-800">{stat.value}</div>
-            <div className="text-xs text-gray-500 mt-1">{stat.label}</div>
-          </div>
-        ))}
-      </div>
-
-      {/* Community Savings Meter */}
-      <div className="bg-gradient-to-r from-green-500 to-green-600 rounded-2xl p-6 mb-8 text-white">
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h2 className="text-lg font-bold">🌍 Community Savings Meter</h2>
-            <p className="text-green-100 text-sm">Your neighborhood this month</p>
-          </div>
-          <div className="text-right">
-            <div className="text-3xl font-bold">₹14,820</div>
-            <div className="text-green-100 text-sm">collective savings</div>
-          </div>
-        </div>
-        {/* Progress Bar */}
-        <div className="bg-green-400 rounded-full h-4 mb-2">
-          <div
-            className="bg-white rounded-full h-4 transition-all"
-            style={{ width: '74%' }}
-          ></div>
-        </div>
-        <div className="flex justify-between text-xs text-green-100">
-          <span>74% of monthly goal reached</span>
-          <span>Goal: ₹20,000</span>
-        </div>
-        {/* Mini Stats */}
-        <div className="grid grid-cols-3 gap-4 mt-4 pt-4 border-t border-green-400">
-          <div className="text-center">
-            <div className="font-bold text-lg">48</div>
-            <div className="text-xs text-green-100">Homes Connected</div>
-          </div>
-          <div className="text-center">
-            <div className="font-bold text-lg">284 kWh</div>
-            <div className="text-xs text-green-100">Energy Shared</div>
-          </div>
-          <div className="text-center">
-            <div className="font-bold text-lg">186 kg</div>
-            <div className="text-xs text-green-100">CO₂ Reduced</div>
-          </div>
-        </div>
-      </div>
-
-      {/* Community Energy Map */}
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 mb-8">
-        <h2 className="font-bold text-gray-800 mb-4">📍 Community Energy Map</h2>
-        <CampusMap />
-      </div>
-
-      {/* Action Buttons */}
-      <div className="grid grid-cols-2 gap-4 mb-8">
-        <button
-          onClick={() => setShowModal(true)}
-          className="bg-yellow-500 hover:bg-yellow-600 text-white font-semibold py-4 rounded-xl flex items-center justify-center gap-2 transition-all"
-        >
-          <span className="text-xl">⚡</span>
-          List My Surplus Energy
-        </button>
-        <button
-          onClick={() => navigate('/marketplace')}
-          className="bg-white border-2 border-gray-200 hover:border-yellow-400 text-gray-700 font-semibold py-4 rounded-xl flex items-center justify-center gap-2 transition-all"
-        >
-          <span className="text-xl">🏪</span>
-          Browse Marketplace
-        </button>
-      </div>
-
-      {/* Recent Activity */}
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
-        <h2 className="font-bold text-gray-800 mb-4">📋 Recent Activity</h2>
-        <div className="space-y-3">
-          {recentActivity.map((item, index) => (
-            <div
-              key={index}
-              className="flex items-center justify-between py-3 border-b border-gray-50 last:border-0"
-            >
-              <div className="flex items-center gap-3">
-                <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm ${
-                  item.type === 'sold' ? 'bg-green-100' : 'bg-blue-100'
-                }`}>
-                  {item.type === 'sold' ? '↗' : '↙'}
-                </div>
-                <div>
-                  <p className="text-sm font-medium text-gray-700">{item.desc}</p>
-                  <p className="text-xs text-gray-400">{item.time}</p>
-                </div>
-              </div>
-              <span className={`text-sm font-bold ${
-                item.type === 'sold' ? 'text-green-600' : 'text-blue-600'
-              }`}>
-                {item.amount}
-              </span>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* List Energy Modal */}
-      {showModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-md mx-4 shadow-2xl">
-            <h2 className="text-xl font-bold text-gray-800 mb-2">⚡ List Your Surplus Energy</h2>
-            <p className="text-gray-500 text-sm mb-6">Your neighbors will see this listing immediately</p>
-            <div className="space-y-4">
-              <div>
-                <label className="text-sm font-medium text-gray-700 block mb-1">
-                  How much energy? (kWh)
-                </label>
-                <input
-                  type="number"
-                  placeholder="e.g. 5"
-                  className="w-full border border-gray-200 rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-yellow-400"
-                  onChange={(e) => setListing({ ...listing, units: e.target.value })}
+    <div style={{ animation: 'sunBob 3.5s ease-in-out infinite', display: 'inline-block' }}>
+      <svg width={size * 2.2} height={size * 2.2} viewBox={`0 0 ${size * 2.2} ${size * 2.2}`} style={{ animation: 'sunGlow 3s ease-in-out infinite', overflow: 'visible' }}>
+        <g transform={`translate(${size * 1.1},${size * 1.1})`}>
+          {/* Spinning rays */}
+          <g style={{ animation: 'raysSpin 18s linear infinite', transformOrigin: '0 0' }}>
+            {Array.from({ length: numRays }).map((_, i) => {
+              const angle = (i / numRays) * Math.PI * 2;
+              const inner = r + 6, outer = r + 18;
+              return (
+                <line key={i}
+                  x1={Math.cos(angle) * inner} y1={Math.sin(angle) * inner}
+                  x2={Math.cos(angle) * outer} y2={Math.sin(angle) * outer}
+                  stroke={i % 2 === 0 ? '#f59e0b' : '#fbbf24'} strokeWidth={i % 2 === 0 ? 3 : 2} strokeLinecap="round"
                 />
-              </div>
-              <div>
-                <label className="text-sm font-medium text-gray-700 block mb-1">
-                  Your price per kWh (₹)
-                </label>
-                <input
-                  type="number"
-                  placeholder="e.g. 18"
-                  className="w-full border border-gray-200 rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-yellow-400"
-                  onChange={(e) => setListing({ ...listing, price: e.target.value })}
-                />
-              </div>
-              <div className="bg-yellow-50 rounded-lg p-3">
-                <p className="text-xs text-yellow-700">
-                  💡 Average price in your area: ₹16-20/kWh
-                </p>
-              </div>
-            </div>
-            <div className="flex gap-3 mt-6">
-              <button
-                onClick={() => setShowModal(false)}
-                className="flex-1 border border-gray-200 text-gray-600 py-3 rounded-lg font-medium hover:bg-gray-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => {
-                  setShowModal(false);
-                  navigate('/marketplace');
-                }}
-                className="flex-1 bg-yellow-500 text-white py-3 rounded-lg font-medium hover:bg-yellow-600"
-              >
-                Post Listing ⚡
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+              );
+            })}
+          </g>
+          {/* Glow halo */}
+          <circle r={r + 4} fill="rgba(250,204,21,0.18)" />
+          {/* Main face circle */}
+          <circle r={r} fill="url(#sunGrad)" />
+          <defs>
+            <radialGradient id="sunGrad" cx="40%" cy="35%">
+              <stop offset="0%" stopColor="#fef08a" />
+              <stop offset="100%" stopColor="#f59e0b" />
+            </radialGradient>
+          </defs>
+          {/* Eyes */}
+          <ellipse cx={-r * 0.28} cy={-r * 0.12} rx={r * 0.11} ry={r * 0.13}
+            fill="#92400e" style={{ animation: 'eyeBlink 4s ease-in-out infinite', transformOrigin: `${-r * 0.28}px ${-r * 0.12}px` }} />
+          <ellipse cx={r * 0.28} cy={-r * 0.12} rx={r * 0.11} ry={r * 0.13}
+            fill="#92400e" style={{ animation: 'eyeBlink 4s ease-in-out infinite 0.08s', transformOrigin: `${r * 0.28}px ${-r * 0.12}px` }} />
+          {/* Eye shine */}
+          <circle cx={-r * 0.22} cy={-r * 0.18} r={r * 0.04} fill="white" opacity="0.9" />
+          <circle cx={r * 0.34} cy={-r * 0.18} r={r * 0.04} fill="white" opacity="0.9" />
+          {/* Rosy cheeks */}
+          <ellipse cx={-r * 0.44} cy={r * 0.18} rx={r * 0.2} ry={r * 0.12}
+            fill="#f87171" opacity="0.5" style={{ animation: 'cheekPop 3s ease-in-out infinite' }} />
+          <ellipse cx={r * 0.44} cy={r * 0.18} rx={r * 0.2} ry={r * 0.12}
+            fill="#f87171" opacity="0.5" style={{ animation: 'cheekPop 3s ease-in-out infinite 0.4s' }} />
+          {/* Smile */}
+          <path
+            d={`M ${-r * 0.35} ${r * 0.22} Q 0 ${r * 0.55} ${r * 0.35} ${r * 0.22}`}
+            fill="none" stroke="#92400e" strokeWidth={r * 0.1} strokeLinecap="round"
+            style={{ animation: 'smileWig 3.5s ease-in-out infinite', transformOrigin: '0 0' }}
+          />
+        </g>
+      </svg>
     </div>
   );
 }
 
-export default Dashboard;
+function MiniChart() {
+  const max = 18;
+  return (
+    <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6, height: 68 }}>
+      {weekly.map((d, i) => (
+        <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+          <div style={{ width: '100%', height: 56, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', position: 'relative' }}>
+            <div style={{ width: '100%', borderRadius: '4px 4px 0 0', height: `${(d.g / max) * 52}px`, background: 'rgba(245,158,11,0.2)', border: '1px solid rgba(245,158,11,0.15)', animation: `growUp 0.8s cubic-bezier(0.1,0.7,0.1,1) ${i * 0.05}s backwards` }} />
+            <div style={{ width: '60%', borderRadius: '3px 3px 0 0', height: `${(d.s / max) * 52}px`, background: '#6dbb85', position: 'absolute', bottom: 0, left: '50%', transform: 'translateX(-50%)', animation: `growUp 0.8s cubic-bezier(0.1,0.7,0.1,1) ${i * 0.05 + 0.1}s backwards` }} />
+          </div>
+          <span style={{ fontSize: 9, color: '#b8a36e', fontWeight: 700 }}>{d.d}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export default function Dashboard() {
+  const navigate = useNavigate();
+  const [showModal, setShowModal] = useState(false);
+  const [listing, setListing] = useState({ units: '', price: '' });
+  const [done, setDone] = useState(false);
+  const [mounted, setMounted] = useState(false);
+  const [kwh, setKwh] = useState(12.4);
+  const user = JSON.parse(localStorage.getItem('user')) || { name: 'Arjun' };
+
+  const greeting = () => {
+    const h = new Date().getHours();
+    return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
+  };
+
+  useEffect(() => {
+    setTimeout(() => setMounted(true), 60);
+    const t = setInterval(() => setKwh(v => +((v + (Math.random() * 0.08 - 0.04)).toFixed(1))), 2500);
+    return () => clearInterval(t);
+  }, []);
+
+  const pct = Math.round((kwh / 16) * 100);
+
+  const postListing = () => {
+    if (!listing.units || !listing.price) return;
+    setDone(true);
+    setTimeout(() => { setShowModal(false); setDone(false); setListing({ units: '', price: '' }); navigate('/marketplace'); }, 1600);
+  };
+
+  return (
+    <>
+      <style>{CSS}</style>
+
+      <div style={{
+        paddingBottom: '32px',
+        background: 'radial-gradient(ellipse at top right, rgba(253,230,138,0.3), transparent 70%), radial-gradient(ellipse at bottom left, rgba(254,215,170,0.3), transparent 70%), #fefaf0',
+        backgroundSize: '200% 200%',
+        minHeight: '100vh'
+      }}>
+
+        {/* ── HEADER ── warm gold gradient, fully light */}
+        <div style={{
+          background: 'linear-gradient(135deg, rgba(245,158,11,0.05), rgba(234,88,12,0.05))',
+          padding: '36px 24px 64px', position: 'relative', overflow: 'hidden',
+          borderBottom: '1px solid rgba(253,230,138,0.5)',
+        }}>
+          {/* Soft radial glow behind sun */}
+          <div style={{ position: 'absolute', top: -60, right: -60, width: 320, height: 320, borderRadius: '50%', background: 'radial-gradient(circle,rgba(250,204,21,0.25) 0%,transparent 70%)', pointerEvents: 'none' }} />
+          <div style={{ position: 'absolute', bottom: -60, left: '20%', width: 200, height: 200, borderRadius: '50%', background: 'radial-gradient(circle,rgba(134,188,114,0.12) 0%,transparent 70%)', pointerEvents: 'none' }} />
+
+          <div className="header-content-inner header-content" style={{ maxWidth: 960, margin: '0 auto', transition: 'padding 0.3s ease' }}>
+            <div style={{ opacity: mounted ? 1 : 0, transform: mounted ? 'none' : 'translateY(12px)', transition: 'all 0.6s ease' }}>
+              <p style={{ margin: '0 0 6px', fontSize: 12, color: '#92740a', fontWeight: 600, letterSpacing: 0.3 }}>
+                {new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+              </p>
+              <h1 style={{ margin: '0 0 10px', fontSize: 34, fontWeight: 900, color: '#451a03', fontFamily: "'Playfair Display',serif", letterSpacing: -1, lineHeight: 1.1 }}>
+                {greeting()}, <span style={{ color: '#b45309' }}>{user.name}!</span>
+              </h1>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 7, justifyContent: window.innerWidth <= 600 ? 'center' : 'flex-start' }}>
+                <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#22c55e', animation: 'blink 2.5s infinite', boxShadow: '0 0 8px #22c55e' }} />
+                <span style={{ fontSize: 13, color: '#15803d', fontWeight: 800 }}>System live · Pune, Maharashtra</span>
+              </div>
+            </div>
+            <div style={{ opacity: mounted ? 1 : 0, transition: 'opacity 0.7s ease 0.2s' }}><SunIcon size={56} /></div>
+          </div>
+
+          {/* Live generation card — warm white on gold bg */}
+          <div style={{
+            maxWidth: 960, margin: '24px auto 0',
+            background: 'rgba(255,255,255,0.85)', backdropFilter: 'blur(16px)',
+            border: '1px solid rgba(255,255,255,0.5)', borderRadius: 24,
+            padding: '24px 32px',
+            opacity: mounted ? 1 : 0, transform: mounted ? 'none' : 'translateY(10px)',
+            transition: 'all 0.6s ease 0.3s',
+            boxShadow: '0 12px 40px rgba(180,130,0,0.15), inset 0 0 0 1px rgba(255,255,255,1)'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <div>
+                <p style={{ margin: 0, fontSize: 11, color: '#92740a', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1.5 }}>Live Generation</p>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 5, marginTop: 3 }}>
+                  <span style={{ fontSize: 42, fontWeight: 900, color: '#b45309', lineHeight: 1, letterSpacing: -1.5 }}>{kwh}</span>
+                  <span style={{ fontSize: 17, color: '#d97706', fontWeight: 600 }}>kWh</span>
+                </div>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ background: '#f0fdf4', border: '1.5px solid #86efac', borderRadius: 10, padding: '7px 16px', marginBottom: 5 }}>
+                  <span style={{ color: '#15803d', fontWeight: 800, fontSize: 14 }}>+₹164 today</span>
+                </div>
+                <p style={{ margin: 0, fontSize: 11, color: '#92740a', fontWeight: 500 }}>↑ 12% vs yesterday</p>
+              </div>
+            </div>
+            {/* Progress bar */}
+            <div style={{ background: 'rgba(245,158,11,0.15)', borderRadius: 99, height: 10, overflow: 'hidden' }}>
+              <div style={{ width: `${pct}%`, height: '100%', borderRadius: 99, background: 'linear-gradient(90deg,#fbbf24,#f59e0b)', boxShadow: '0 0 8px rgba(245,158,11,0.4)', transition: 'width 1s ease' }} />
+            </div>
+            <p style={{ margin: '7px 0 0', fontSize: 12, color: '#92740a', fontWeight: 500 }}>{pct}% of 16 kWh daily target</p>
+          </div>
+        </div>
+
+        {/* ── CONTENT ── */}
+        <div style={{ maxWidth: 960, margin: '0 auto', padding: '0 24px' }}>
+
+          {/* Stats row — overlap header slightly */}
+          <div className="stats-grid" style={{ marginTop: -28, marginBottom: 20, position: 'relative', zIndex: 2 }}>
+            {[
+              { icon: '⚡', val: <CountUp end={8.2} decimals={1} suffix=" kWh" />, label: 'Energy Shared', accent: '#c2410c', bg: 'linear-gradient(135deg, #fff7ed, #ffedd5)', border: '#fdba74' },
+              { icon: '💰', val: <CountUp end={164} prefix="₹" />, label: 'Money Earned', accent: '#15803d', bg: 'linear-gradient(135deg, #f0fdf4, #dcfce7)', border: '#86efac' },
+              { icon: '🌿', val: <CountUp end={6.5} decimals={1} suffix=" kg" />, label: 'CO₂ Saved', accent: '#0369a1', bg: 'linear-gradient(135deg, #f0f9ff, #e0f2fe)', border: '#7dd3fc' },
+              { icon: '🏆', val: '#4/48', label: 'Community Rank', accent: '#6d28d9', bg: 'linear-gradient(135deg, #faf5ff, #f3e8ff)', border: '#d8b4fe' },
+            ].map(s => (
+              <div key={s.label} className="um-card" style={{ background: s.bg, border: `1px solid ${s.border}`, borderRadius: 24, padding: '24px', boxShadow: '0 8px 24px rgba(0,0,0,0.04)', animation: 'fadeUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) both' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+                  <div className="um-card-icon" style={{ fontSize: 24, background: '#fff', width: 48, height: 48, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 12px rgba(0,0,0,0.05)' }}>{s.icon}</div>
+                </div>
+                <div style={{ fontSize: 28, fontWeight: 900, color: '#451a03', letterSpacing: '-1.5px', lineHeight: 1 }}>{s.val}</div>
+                <div style={{ fontSize: 13, color: '#78350f', marginTop: 8, fontWeight: 600 }}>{s.label}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Two columns */}
+          <div className="two-col-grid" style={{ marginBottom: 16 }}>
+
+            {/* Community savings */}
+            <div className="um-card" style={{ padding: 24 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 14 }}>
+                <div>
+                  <p style={{ margin: '0 0 2px', fontSize: 10, color: '#15803d', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1.5 }}>Community Goal</p>
+                  <h3 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: '#14532d', letterSpacing: '-0.5px' }}>Monthly Savings</h3>
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontSize: 22, fontWeight: 900, color: '#15803d', letterSpacing: -1 }}>₹14,820</div>
+                  <div style={{ fontSize: 10, color: '#16a34a' }}>of ₹20,000 goal</div>
+                </div>
+              </div>
+              <div style={{ background: 'rgba(134,239,172,0.4)', borderRadius: 99, height: 8, overflow: 'hidden', marginBottom: 14 }}>
+                <div style={{ width: '74%', height: '100%', borderRadius: 99, background: 'linear-gradient(90deg,#22c55e,#16a34a)', boxShadow: '0 0 8px rgba(34,197,94,0.3)' }} />
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+                {[['284 kWh', 'Shared'], ['48', 'Homes'], ['186 kg', 'CO₂']].map(([v, l]) => (
+                  <div key={l} style={{ background: 'rgba(255,255,255,0.6)', borderRadius: 10, padding: '10px 6px', textAlign: 'center', border: '1px solid rgba(134,239,172,0.5)' }}>
+                    <div style={{ color: '#14532d', fontWeight: 800, fontSize: 12 }}>{v}</div>
+                    <div style={{ color: '#16a34a', fontSize: 10, marginTop: 1 }}>{l}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Weekly chart */}
+            <div className="um-card" style={{ padding: 24 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                <h3 style={{ margin: 0, fontSize: 15, fontWeight: 800, color: '#451a03', letterSpacing: '-0.5px' }}>Weekly Overview</h3>
+                <div style={{ display: 'flex', gap: 12 }}>
+                  {[['rgba(245,158,11,0.3)', 'Generated'], ['#6dbb85', 'Shared']].map(([c, l]) => (
+                    <div key={l} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <div style={{ width: 9, height: 9, borderRadius: 2, background: c, border: `1px solid ${c}` }} />
+                      <span style={{ fontSize: 10, color: '#92740a', fontWeight: 600 }}>{l}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <MiniChart />
+            </div>
+          </div>
+
+          {/* Map */}
+          <div className="um-card" style={{ marginBottom: 16, padding: 24 }}>
+            <h2 style={{ margin: '0 0 16px', fontSize: 16, fontWeight: 800, color: '#451a03', letterSpacing: '-0.5px' }}>📍 Community Energy Map</h2>
+            <CampusMap />
+          </div>
+
+          {/* Action buttons */}
+          <div className="two-col-grid" style={{ gap: 16, marginBottom: 24 }}>
+            <button onClick={() => setShowModal(true)} className="gradient-btn">
+              <span style={{ fontSize: 22 }}>⚡</span> List My Surplus Energy
+            </button>
+            <button onClick={() => navigate('/marketplace')} className="ghost-btn">
+              <span style={{ fontSize: 22 }}>🏪</span> Browse Marketplace
+            </button>
+          </div>
+
+          {/* Tip */}
+          <div className="um-card" style={{ padding: '20px 24px', marginBottom: 24, display: 'flex', alignItems: 'center', gap: 16 }}>
+            <div style={{ width: 48, height: 48, borderRadius: '50%', background: '#fef3c7', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24, flexShrink: 0, boxShadow: 'inset 0 2px 4px rgba(255,255,255,0.5), 0 4px 12px rgba(245, 158, 11, 0.2)' }}>💡</div>
+            <div style={{ flex: 1 }}>
+              <p style={{ margin: '0 0 4px', fontWeight: 900, fontSize: 15, color: '#9a3412', letterSpacing: -0.2 }}>Peak Hours: 11AM – 3PM</p>
+              <p style={{ margin: 0, fontSize: 13, color: '#b45309', fontWeight: 500 }}>Best time to sell — earn up to <strong style={{ color: '#ea580c' }}>15% more</strong> per kWh</p>
+            </div>
+            <button onClick={() => setShowModal(true)} style={{ background: '#ea580c', color: '#fff', border: 'none', borderRadius: 12, padding: '12px 20px', fontWeight: 800, fontSize: 14, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap', boxShadow: '0 4px 12px rgba(234, 88, 12, 0.3)', transition: 'transform 0.2s', ':hover': { transform: 'scale(1.05)' } }}>
+              List Now →
+            </button>
+          </div>
+
+          {/* Recent activity */}
+          <div className="um-card" style={{ marginBottom: 32, overflow: 'hidden' }}>
+            <div style={{ padding: '24px', borderBottom: '1px solid rgba(253,230,138,0.3)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h2 style={{ margin: 0, fontSize: 18, fontWeight: 900, color: '#451a03', display: 'flex', alignItems: 'center', gap: 8, letterSpacing: '-0.5px' }}><span style={{ fontSize: 22 }}>📋</span> Recent Activity</h2>
+              <span style={{ fontSize: 13, color: '#ea580c', fontWeight: 800, cursor: 'pointer', background: 'rgba(255,237,213,0.5)', padding: '6px 12px', borderRadius: 'full' }} onClick={() => navigate('/transactions')}>View all →</span>
+            </div>
+            {recentActivity.length > 0 ? recentActivity.map((a, i) => (
+              <div key={i} className="um-row" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 24px', borderBottom: i < recentActivity.length - 1 ? '1px solid #f8fafc' : 'none' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+                  <div style={{ width: 44, height: 44, borderRadius: 14, background: a.type === 'sold' ? 'linear-gradient(135deg, #dcfce7, #bbf7d0)' : 'linear-gradient(135deg, #dbeafe, #bfdbfe)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, color: a.type === 'sold' ? '#16a34a' : '#2563eb', fontSize: 18, boxShadow: '0 4px 12px rgba(0,0,0,0.05)' }}>
+                    {a.type === 'sold' ? '↑' : '↓'}
+                  </div>
+                  <div>
+                    <p style={{ margin: 0, fontSize: 15, fontWeight: 800, color: '#1e293b' }}>{a.desc}</p>
+                    <p style={{ margin: '4px 0 0', fontSize: 12, color: '#64748b', fontWeight: 500 }}>{a.sub} <span style={{ color: '#cbd5e1', margin: '0 4px' }}>|</span> {a.time}</p>
+                  </div>
+                </div>
+                <span style={{ fontSize: 16, fontWeight: 900, color: a.type === 'sold' ? '#16a34a' : '#2563eb', background: a.type === 'sold' ? '#f0fdf4' : '#f0f9ff', padding: '6px 12px', borderRadius: 8 }}>{a.amount}</span>
+              </div>
+            )) : (
+              <div style={{ padding: '32px 24px', textAlign: 'center' }}>
+                <div style={{ fontSize: 40, marginBottom: 12 }}>🍃</div>
+                <p style={{ margin: '0 0 8px', fontSize: 15, fontWeight: 800, color: '#451a03' }}>No activity yet</p>
+                <p style={{ margin: 0, fontSize: 13, color: '#92740a' }}>List your surplus energy to make your first trade!</p>
+              </div>
+            )}
+          </div>
+
+          {/* About Section */}
+          <div className="um-card" style={{ padding: '32px', marginBottom: 32 }}>
+            <div style={{ display: 'flex', gap: 24, alignItems: 'flex-start' }}>
+              <div style={{ width: 64, height: 64, borderRadius: 20, background: 'linear-gradient(135deg, #f59e0b, #ea580c)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 32, flexShrink: 0, boxShadow: '0 8px 24px rgba(234, 88, 12, 0.3)' }}>☀️</div>
+              <div>
+                <h2 style={{ margin: '0 0 8px', fontSize: 22, fontWeight: 900, color: '#451a03', letterSpacing: -0.5 }}>About Urjamitra</h2>
+                <p style={{ margin: '0 0 16px', fontSize: 15, color: '#9a3412', lineHeight: 1.6, fontWeight: 500 }}>
+                  Urjamitra (ऊर्जा मित्र) is essentially a friendly neighborhood energy network. Our goal is to empower local communities to trade surplus solar energy seamlessly, making renewable energy accessible, profitable, and equitable for everyone.
+                </p>
+                <div className="three-col-grid">
+                  {[
+                    { t: 'Empowerment', d: 'Giving you control over your energy.' },
+                    { t: 'Sustainability', d: 'Reducing carbon footprint together.' },
+                    { t: 'Community', d: 'Building stronger, greener neighborhoods.' }
+                  ].map(v => (
+                    <div key={v.t} style={{ background: 'rgba(255,255,255,0.6)', border: '1px solid rgba(253,230,138,0.5)', padding: '16px', borderRadius: 16 }}>
+                      <h4 style={{ margin: '0 0 4px', fontSize: 14, fontWeight: 800, color: '#78350f' }}>{v.t}</h4>
+                      <p style={{ margin: 0, fontSize: 12, color: '#9a3412', lineHeight: 1.4 }}>{v.d}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Contact & Support Section */}
+          <div className="um-card" style={{ padding: '32px', marginBottom: 32, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 24 }}>
+            <div>
+              <h2 style={{ margin: '0 0 8px', fontSize: 22, fontWeight: 900, color: '#451a03', letterSpacing: -0.5 }}>Need Help? Contact Us</h2>
+              <p style={{ margin: 0, fontSize: 15, color: '#9a3412', fontWeight: 500 }}>
+                Our support team is available 24/7 to assist you with trades and technical issues.
+              </p>
+            </div>
+            <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+              <a href="mailto:neuralknights1234@gmail.com" style={{ textDecoration: 'none', maxWidth: '100%' }}>
+                <button className="ghost-btn" style={{ padding: '14px 24px', fontSize: 14, wordBreak: 'break-all', maxWidth: '100%' }}>
+                  <span style={{ fontSize: 18, flexShrink: 0 }}>✉️</span>
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>neuralknights1234@gmail.com</span>
+                </button>
+              </a>
+              <button className="gradient-btn" style={{ padding: '14px 24px', fontSize: 14 }}>
+                <span style={{ fontSize: 18 }}>📞</span> +91 1800 123 4567
+              </button>
+            </div>
+          </div>
+
+          {/* Footer Copyright */}
+          <div style={{ textAlign: 'center', padding: '0 24px 24px', opacity: 0.8 }}>
+            <p style={{ margin: 0, fontSize: 13, color: '#92400e', fontWeight: 600, letterSpacing: 0.5 }}>
+              © {new Date().getFullYear()} Urjamitra. Crafted with ❤️ by <span style={{ fontWeight: 900, color: '#ea580c' }}>Team NEURAL KNIGHTS _AISSMS IOIT</span>
+            </p>
+          </div>
+        </div>
+
+        {/* MODAL */}
+        {showModal && (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(120,80,0,0.4)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 50, backdropFilter: 'blur(6px)' }}>
+            <div style={{ background: '#fffdf5', borderRadius: '26px 26px 0 0', padding: '28px 28px 48px', width: '100%', maxWidth: 520, boxShadow: '0 -16px 60px rgba(180,130,0,0.15)', animation: 'slideUp 0.35s cubic-bezier(0.4,0,0.2,1)', border: '1.5px solid #fde68a', borderBottom: 'none' }}>
+              {done ? (
+                <div style={{ textAlign: 'center', padding: '32px 0' }}>
+                  <div style={{ width: 68, height: 68, borderRadius: '50%', background: '#dcfce7', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 32, margin: '0 auto 16px' }}>✅</div>
+                  <h3 style={{ margin: '0 0 8px', fontSize: 20, fontWeight: 900, color: '#451a03' }}>Listing Posted!</h3>
+                  <p style={{ margin: 0, color: '#a16207', fontSize: 13 }}>Visible to 48 neighbors · Redirecting…</p>
+                </div>
+              ) : (
+                <>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 }}>
+                    <div>
+                      <h2 style={{ margin: '0 0 4px', fontSize: 20, fontWeight: 900, color: '#451a03' }}>⚡ List Surplus Energy</h2>
+                      <p style={{ margin: 0, fontSize: 12, color: '#a16207' }}>Your neighbors will see this instantly</p>
+                    </div>
+                    <button onClick={() => setShowModal(false)} style={{ background: '#fef9c3', border: '1px solid #fde68a', borderRadius: 99, width: 36, height: 36, cursor: 'pointer', fontSize: 16, color: '#92400e', fontFamily: 'inherit' }}>✕</button>
+                  </div>
+                  {['units', 'price'].map(f => (
+                    <div key={f} style={{ marginBottom: 14 }}>
+                      <label style={{ fontSize: 11, fontWeight: 700, color: '#a16207', display: 'block', marginBottom: 7, textTransform: 'uppercase', letterSpacing: 1 }}>
+                        {f === 'units' ? 'Energy Amount (kWh)' : 'Price per kWh (₹)'}
+                      </label>
+                      <input type="number" placeholder={f === 'units' ? 'e.g. 5' : 'e.g. 18'} value={listing[f]}
+                        onChange={e => setListing({ ...listing, [f]: e.target.value })}
+                        onFocus={e => e.target.style.borderColor = '#f59e0b'} onBlur={e => e.target.style.borderColor = '#fde68a'}
+                        style={{ width: '100%', border: '1.5px solid #fde68a', borderRadius: 12, padding: '13px 16px', fontSize: 15, color: '#451a03', outline: 'none', boxSizing: 'border-box', fontFamily: 'inherit', transition: 'border 0.2s', background: '#fff' }} />
+                    </div>
+                  ))}
+                  {listing.units && listing.price && (
+                    <div style={{ background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 12, padding: '13px 16px', marginBottom: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center', animation: 'fadeInDown 0.3s ease' }}>
+                      <span style={{ fontSize: 13, color: '#15803d', fontWeight: 600 }}>You'll earn</span>
+                      <span style={{ fontSize: 20, fontWeight: 900, color: '#15803d' }}>₹{(parseFloat(listing.units) * parseFloat(listing.price) || 0).toFixed(0)}</span>
+                    </div>
+                  )}
+                  <div style={{ background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: 11, padding: '10px 14px', marginBottom: 20 }}>
+                    <p style={{ margin: 0, fontSize: 12, color: '#92400e' }}>💡 Market rate today: <strong>₹16–20/kWh</strong></p>
+                  </div>
+                  <button onClick={postListing} disabled={!listing.units || !listing.price} style={{ width: '100%', padding: '17px', background: listing.units && listing.price ? 'linear-gradient(135deg,#f59e0b,#d97706)' : '#fef3c7', color: listing.units && listing.price ? '#fff' : '#d97706', border: 'none', borderRadius: 14, fontWeight: 800, fontSize: 15, cursor: listing.units && listing.price ? 'pointer' : 'not-allowed', fontFamily: 'inherit', boxShadow: listing.units && listing.price ? '0 6px 20px rgba(217,119,6,0.35)' : 'none', transition: 'all 0.2s' }}>
+                    Post Listing ⚡
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}

@@ -1,7 +1,7 @@
 # ⚡ Urjamitra — ऊर्जा मित्र
 
 **Bijli baanto, dosti badhao.**
-*Share electricity, grow friendship.*
+_Share electricity, grow friendship._
 
 ---
 
@@ -21,13 +21,13 @@ This project was built for the **Prayatna 3.0 Hackathon 2026** at Acropolis Inst
 
 > Login → Dashboard → List Energy → Marketplace → Map → Transactions
 
-| Screen | What it does |
-|--------|-------------|
-| 🔐 Login / Signup | Create account with your home address |
-| 📊 Dashboard | See your energy stats + neighborhood community savings |
-| 🏪 Marketplace | Browse and request energy from nearby sellers |
-| 🗺️ Neighborhood Map | Visual map showing who's selling and buying near you |
-| 📋 Transactions | Full history of your trades with earnings breakdown |
+| Screen              | What it does                                           |
+| ------------------- | ------------------------------------------------------ |
+| 🔐 Login / Signup   | Create account with your home address                  |
+| 📊 Dashboard        | See your energy stats + neighborhood community savings |
+| 🏪 Marketplace      | Browse and request energy from nearby sellers          |
+| 🗺️ Neighborhood Map | Visual map showing who's selling and buying near you   |
+| 📋 Transactions     | Full history of your trades with earnings breakdown    |
 
 ---
 
@@ -36,6 +36,7 @@ This project was built for the **Prayatna 3.0 Hackathon 2026** at Acropolis Inst
 We kept it simple and practical — nothing that would explode at 3am during a hackathon.
 
 **Frontend**
+
 - React.js — component-based UI, fast to build
 - Tailwind CSS — utility classes, no fighting with stylesheets
 - Leaflet.js — free interactive maps (no Google Maps billing surprises)
@@ -43,6 +44,7 @@ We kept it simple and practical — nothing that would explode at 3am during a h
 - Axios — for talking to the backend
 
 **Backend**
+
 - Node.js + Express.js — lightweight REST API
 - MongoDB Atlas — cloud database, free tier handles everything we need
 - Mongoose — makes MongoDB queries feel human
@@ -50,6 +52,7 @@ We kept it simple and practical — nothing that would explode at 3am during a h
 - bcryptjs — passwords are hashed, never stored plain
 
 **Hosting (when deployed)**
+
 - Frontend → Vercel
 - Backend → Railway
 - Database → MongoDB Atlas (always on)
@@ -152,13 +155,13 @@ Your browser will open at `http://localhost:3000` automatically.
 
 ## The Numbers (Projected for a 10-home pilot)
 
-| Metric | Value |
-|--------|-------|
-| Homes connected | 48 |
-| Energy traded | 284 kWh/month |
-| Community savings | ₹14,820/month |
-| CO₂ reduced | 186 kg/month |
-| Avg earnings per seller | ₹820/month |
+| Metric                  | Value         |
+| ----------------------- | ------------- |
+| Homes connected         | 48            |
+| Energy traded           | 284 kWh/month |
+| Community savings       | ₹14,820/month |
+| CO₂ reduced             | 186 kg/month  |
+| Avg earnings per seller | ₹820/month    |
 
 ---
 
@@ -203,4 +206,4 @@ MIT — use it, build on it, just don't remove the ⚡
 
 ---
 
-*If you're a judge reading this — yes, we built the entire thing during the hackathon. The commit history doesn't lie.*
+_If you're a judge reading this — yes, we built the entire thing during the hackathon. The commit history doesn't lie._
