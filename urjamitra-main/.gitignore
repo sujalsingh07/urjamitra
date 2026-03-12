@@ -1,0 +1,26 @@
+# Node modules
+node_modules/
+*/node_modules/
+
+# Python virtual environments
+venv/
+frontend/venv/
+backend/venv/
+
+# Environment variables (never upload secrets)
+.env
+*/.env
+
+# Build / production folders
+build/
+dist/
+frontend/build/
+
+# System files
+.DS_Store
+frontend/.DS_Store
+backend/.DS_Store
+
+# Logs
+*.log
+npm-debug.log*
