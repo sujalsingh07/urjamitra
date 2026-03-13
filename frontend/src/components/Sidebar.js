@@ -57,20 +57,6 @@ export default function Sidebar({ isOpen, close }) {
                 </div>
 
                 <div style={{ padding: 24, paddingBottom: 0 }}>
-                    <div style={{ background: '#fffbeb', border: '1.5px solid #fde68a', borderRadius: 16, padding: 16, position: 'relative', overflow: 'hidden', marginBottom: 16 }}>
-                        <div style={{ position: 'absolute', top: -20, right: -20, width: 60, height: 60, background: 'rgba(245,158,11,0.2)', borderRadius: '50%', filter: 'blur(10px)' }} />
-                        <p style={{ margin: '0 0 4px', fontSize: 13, fontWeight: 800, color: '#92400e', position: 'relative' }}>🔋 Pro Status</p>
-                        <p style={{ margin: 0, fontSize: 12, color: '#b45309', marginBottom: 14, position: 'relative' }}>You're in the top 5% of energy sharers!</p>
-                        <button
-                            onClick={() => alert("🎁 Rewards center coming soon!")}
-                            style={{ width: '100%', background: '#fff', border: '1.5px solid #fcd34d', color: '#d97706', padding: '10px', borderRadius: 10, fontWeight: 800, fontSize: 13, cursor: 'pointer', transition: 'all 0.2s', position: 'relative', boxShadow: '0 4px 12px rgba(253,211,77,0.3)' }}
-                            onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 6px 16px rgba(253,211,77,0.4)'; e.currentTarget.style.background = '#fef9c3'; }}
-                            onMouseLeave={(e) => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(253,211,77,0.3)'; e.currentTarget.style.background = '#fff'; }}
-                        >
-                            View Rewards
-                        </button>
-                    </div>
-
                     <button
                         onClick={() => { localStorage.removeItem('user'); navigate('/'); close(); }}
                         style={{ width: '100%', background: 'transparent', border: '1.5px solid #fca5a5', color: '#dc2626', padding: '12px', borderRadius: 12, fontWeight: 800, fontSize: 14, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, transition: 'all 0.2s' }}
