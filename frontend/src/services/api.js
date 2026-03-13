@@ -275,29 +275,6 @@ export const getUserReviews = async (userId) => {
     return handleError(error);
   }
 };
-/* ===============================
-   CHAT
-================================ */
-
-export const getChatHistory = async () => {
-  try {
-    const res = await apiClient.get("/chat/history");
-    return res.data;
-  } catch (error) {
-    console.error("Chat history error:", error);
-    return { success: false };
-  }
-};
-
-export const sendMessage = async (message) => {
-  try {
-    const res = await apiClient.post("/chat", { message });
-    return res.data;
-  } catch (error) {
-    console.error("Chat send error:", error);
-    return { success: false };
-  }
-};
 
 export const api = {
   signup,
@@ -317,9 +294,5 @@ export const api = {
   addBalance,
 
   leaveReview,
-  getUserReviews,
-
-  // CHAT
-  getChatHistory,
-  sendMessage
+  getUserReviews
 };

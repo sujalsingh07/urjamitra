@@ -6,7 +6,6 @@ import Dashboard from "./pages/Dashboard";
 import Marketplace from "./pages/Marketplace";
 import MapView from "./pages/MapView";
 import Transactions from "./pages/Transactions";
-import ChatPage from "./pages/ChatPage";
 
 import Layout from "./components/Layout";
 import PageTransition from "./components/PageTransition";
@@ -73,18 +72,6 @@ function AnimatedRoutes() {
             <Layout>
               <PageTransition>
                 <Transactions />
-              </PageTransition>
-            </Layout>
-          }
-        />
-
-        {/* CHAT PAGE */}
-        <Route
-          path="/chat"
-          element={
-            <Layout>
-              <PageTransition>
-                <ChatPage />
               </PageTransition>
             </Layout>
           }
