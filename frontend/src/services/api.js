@@ -1,120 +1,310 @@
-import axios from 'axios';
+import axios from "axios";
 
-// Shared axios instance (can be used for both marketplace and campus-network APIs)
-// Ensure REACT_APP_API_BASE_URL points to your backend, e.g. http://localhost:5001/api
+/* ===============================
+   Base API URL
+================================ */
+
+const API_BASE =
+  process.env.REACT_APP_API_BASE_URL || "http://localhost:5000/api";
+
+/* ===============================
+   Axios Client
+================================ */
+
 export const apiClient = axios.create({
-  baseURL: process.env.REACT_APP_API_BASE_URL || 'http://localhost:5001/api',
+  baseURL: API_BASE,
   timeout: 10000,
 });
 
-export const fetchNetworkMetrics = () => apiClient.get('/metrics');
-export const fetchDevices = () => apiClient.get('/devices');
-export const fetchPolicies = () => apiClient.get('/policies');
-export const createPolicy = (policy) => apiClient.post('/policies', policy);
-export const updatePolicy = (id, policy) => apiClient.put(`/ policies / ${id} `, policy);
-export const fetchTrafficLogs = () => apiClient.get('/traffic/logs');
+/* ===============================
+   Token Helper
+================================ */
 
-// Legacy/Marketplace API (used by Marketplace + Transactions pages)
-const API_BASE = process.env.REACT_APP_API_BASE_URL || 'http://localhost:5001/api';
+const getToken = () => localStorage.getItem("token");
 
-const gettoken = () => localStorage.getItem('token');
+/* ===============================
+   Request Interceptor
+   (Automatically add token)
+================================ */
+
+apiClient.interceptors.request.use((config) => {
+  const token = getToken();
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+/* ===============================
+   Error Handler
+================================ */
+
+const handleError = (error) => {
+  console.error("API Error:", error);
+  return error.response?.data || { error: "Something went wrong" };
+};
+
+/* ===============================
+   Network / Device APIs
+================================ */
+
+export const fetchNetworkMetrics = async () => {
+  try {
+    const res = await apiClient.get("/metrics");
+    return res.data;
+  } catch (error) {
+    return handleError(error);
+  }
+};
+
+export const fetchDevices = async () => {
+  try {
+    const res = await apiClient.get("/devices");
+    return res.data;
+  } catch (error) {
+    return handleError(error);
+  }
+};
+
+export const fetchPolicies = async () => {
+  try {
+    const res = await apiClient.get("/policies");
+    return res.data;
+  } catch (error) {
+    return handleError(error);
+  }
+};
+
+export const createPolicy = async (policy) => {
+  try {
+    const res = await apiClient.post("/policies", policy);
+    return res.data;
+  } catch (error) {
+    return handleError(error);
+  }
+};
+
+export const updatePolicy = async (id, policy) => {
+  try {
+    const res = await apiClient.put(`/policies/${id}`, policy);
+    return res.data;
+  } catch (error) {
+    return handleError(error);
+  }
+};
+
+export const fetchTrafficLogs = async () => {
+  try {
+    const res = await apiClient.get("/traffic/logs");
+    return res.data;
+  } catch (error) {
+    return handleError(error);
+  }
+};
+
+/* ===============================
+   AUTH
+================================ */
+
+export const signup = async (data) => {
+  try {
+    const res = await apiClient.post("/auth/signup", data);
+    return res.data;
+  } catch (error) {
+    return handleError(error);
+  }
+};
+
+export const login = async (email, password) => {
+  try {
+    const res = await apiClient.post("/auth/login", { email, password });
+    return res.data;
+  } catch (error) {
+    return handleError(error);
+  }
+};
+
+/* ===============================
+   LISTINGS
+================================ */
+
+export const getListings = async () => {
+  try {
+    const res = await apiClient.get("/listings/all");
+    return res.data;
+  } catch (error) {
+    return handleError(error);
+  }
+};
+
+export const getMyListings = async () => {
+  try {
+    const res = await apiClient.get("/listings/my-listings");
+    return res.data;
+  } catch (error) {
+    return handleError(error);
+  }
+};
+
+export const createListing = async (data) => {
+  try {
+    const res = await apiClient.post("/listings/create", data);
+    return res.data;
+  } catch (error) {
+    return handleError(error);
+  }
+};
+
+export const deleteListing = async (listingId) => {
+  try {
+    const res = await apiClient.delete(`/listings/${listingId}`);
+    return res.data;
+  } catch (error) {
+    return handleError(error);
+  }
+};
+
+/* ===============================
+   TRANSACTIONS
+================================ */
+
+export const getMyTransactions = async () => {
+  try {
+    const res = await apiClient.get("/transactions/my-transactions");
+    return res.data;
+  } catch (error) {
+    return handleError(error);
+  }
+};
+
+export const purchaseEnergy = async (listingId, units) => {
+  try {
+    const res = await apiClient.post("/transactions/purchase", {
+      listingId,
+      units,
+    });
+    return res.data;
+  } catch (error) {
+    return handleError(error);
+  }
+};
+
+/* ===============================
+   USERS / PROFILE
+================================ */
+
+export const getProfile = async (userId) => {
+  try {
+    const res = await apiClient.get(`/users/profile/${userId}`);
+    return res.data;
+  } catch (error) {
+    return handleError(error);
+  }
+};
+
+export const getMyProfile = async () => {
+  try {
+    const res = await apiClient.get("/users/me");
+    return res.data;
+  } catch (error) {
+    return handleError(error);
+  }
+};
+
+export const updateProfile = async (data) => {
+  try {
+    const res = await apiClient.put("/users/profile", data);
+    return res.data;
+  } catch (error) {
+    return handleError(error);
+  }
+};
+
+export const addBalance = async (amount) => {
+  try {
+    const res = await apiClient.post("/users/add-balance", { amount });
+    return res.data;
+  } catch (error) {
+    return handleError(error);
+  }
+};
+
+/* ===============================
+   REVIEWS
+================================ */
+
+export const leaveReview = async (
+  revieweeId,
+  rating,
+  comment,
+  transactionId
+) => {
+  try {
+    const res = await apiClient.post("/users/review", {
+      revieweeId,
+      rating,
+      comment,
+      transactionId,
+    });
+    return res.data;
+  } catch (error) {
+    return handleError(error);
+  }
+};
+
+export const getUserReviews = async (userId) => {
+  try {
+    const res = await apiClient.get(`/users/reviews/${userId}`);
+    return res.data;
+  } catch (error) {
+    return handleError(error);
+  }
+};
+/* ===============================
+   CHAT
+================================ */
+
+export const getChatHistory = async () => {
+  try {
+    const res = await apiClient.get("/chat/history");
+    return res.data;
+  } catch (error) {
+    console.error("Chat history error:", error);
+    return { success: false };
+  }
+};
+
+export const sendMessage = async (message) => {
+  try {
+    const res = await apiClient.post("/chat", { message });
+    return res.data;
+  } catch (error) {
+    console.error("Chat send error:", error);
+    return { success: false };
+  }
+};
 
 export const api = {
-  // Auth
-  signup: (data) =>
-    fetch(`${API_BASE} /auth/signup`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-    }).then((res) => res.json()),
+  signup,
+  login,
 
-  login: (email, password) =>
-    fetch(`${API_BASE} /auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
-    }).then((res) => res.json()),
+  getListings,
+  getMyListings,
+  createListing,
+  deleteListing,
 
-  // Listings
-  getListings: () =>
-    fetch(`${API_BASE} /listings/all`).then((res) => res.json()),
+  getMyTransactions,
+  purchaseEnergy,
 
-  getMyListings: () =>
-    fetch(`${API_BASE} /listings/my - listings`, {
-      headers: { Authorization: `Bearer ${gettoken()} ` },
-    }).then((res) => res.json()),
+  getProfile,
+  getMyProfile,
+  updateProfile,
+  addBalance,
 
-  createListing: (data) =>
-    fetch(`${API_BASE} /listings/create`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${gettoken()} `,
-      },
-      body: JSON.stringify(data),
-    }).then((res) => res.json()),
+  leaveReview,
+  getUserReviews,
 
-  deleteListing: (listingId) =>
-    fetch(`${API_BASE} /listings/${listingId} `, {
-      method: 'DELETE',
-      headers: { Authorization: `Bearer ${gettoken()} ` },
-    }).then((res) => res.json()),
-
-  // Transactions
-  getMyTransactions: () =>
-    fetch(`${API_BASE} /transactions/my - transactions`, {
-      headers: { Authorization: `Bearer ${gettoken()} ` },
-    }).then((res) => res.json()),
-
-  purchaseEnergy: (listingId, units) =>
-    fetch(`${API_BASE} /transactions/purchase`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${gettoken()} `,
-      },
-      body: JSON.stringify({ listingId, units }),
-    }).then((res) => res.json()),
-
-  // Users / Profile
-  getProfile: (userId) =>
-    fetch(`${API_BASE} /users/profile / ${userId} `).then((res) => res.json()),
-
-  getMyProfile: () =>
-    fetch(`${API_BASE} /users/me`, {
-      headers: { Authorization: `Bearer ${gettoken()} ` },
-    }).then((res) => res.json()),
-
-  updateProfile: (data) =>
-    fetch(`${API_BASE} /users/profile`, {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${gettoken()} `,
-      },
-      body: JSON.stringify(data),
-    }).then((res) => res.json()),
-
-  addBalance: (amount) =>
-    fetch(`${API_BASE} /users/add - balance`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${gettoken()} `,
-      },
-      body: JSON.stringify({ amount }),
-    }).then((res) => res.json()),
-
-  leaveReview: (revieweeId, rating, comment, transactionId) =>
-    fetch(`${API_BASE} /users/review`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${gettoken()} `,
-      },
-      body: JSON.stringify({ revieweeId, rating, comment, transactionId }),
-    }).then((res) => res.json()),
-
-  getUserReviews: (userId) =>
-    fetch(`${API_BASE} /users/reviews / ${userId} `).then((res) => res.json()),
+  // CHAT
+  getChatHistory,
+  sendMessage
 };

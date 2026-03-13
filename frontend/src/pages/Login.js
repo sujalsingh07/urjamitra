@@ -72,7 +72,7 @@ export default function Login() {
   const handleSubmit = async () => {
     setError(''); setLoading(true);
     try {
-      const endpoint = isLogin ? 'http://localhost:5001/api/auth/login' : 'http://localhost:5001/api/auth/signup';
+      const endpoint = isLogin ? 'http://localhost:5000/api/auth/login' : 'http://localhost:5000/api/auth/signup';
       const res = await axios.post(endpoint, form);
       if (res.data.success) {
         localStorage.setItem('token', res.data.token);
