@@ -72,7 +72,8 @@ export default function Login() {
   const handleSubmit = async () => {
     setError(''); setLoading(true);
     try {
-      const endpoint = isLogin ? 'http://localhost:5000/api/auth/login' : 'http://localhost:5000/api/auth/signup';
+      const apiBase = process.env.REACT_APP_API_BASE_URL || 'http://localhost:5001/api';
+      const endpoint = isLogin ? `${apiBase}/auth/login` : `${apiBase}/auth/signup`;
       const res = await axios.post(endpoint, form);
       if (res.data.success) {
         localStorage.setItem('token', res.data.token);
