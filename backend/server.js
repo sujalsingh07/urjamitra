@@ -7,7 +7,7 @@ require("dotenv").config();
 const chatRoutes = require("./routes/chatRoutes");
 const app = express();
 const server = http.createServer(app);
-
+const messageRoutes = require("./routes/messageRoutes");
 // Socket.IO setup
 const io = new Server(server, {
   cors: {
@@ -33,22 +33,29 @@ app.use("/api/auth", require("./routes/authRoutes"));
 app.use("/api/listings", require("./routes/listingRoutes"));
 app.use("/api/transactions", require("./routes/transactionRoutes"));
 app.use("/api/users", require("./routes/userRoutes"));
-
+app.use("/api/messages", messageRoutes);
 /* ============================
    SOCKET.IO EVENTS
 ============================ */
 
 io.on("connection", (socket) => {
+
   console.log("⚡ User connected:", socket.id);
 
-  // Send message
+  // Receive message from client
   socket.on("send_message", (data) => {
+
+    console.log("📩 Message received:", data);
+
+    // Send message to all connected users
     io.emit("receive_message", data);
+
   });
 
   socket.on("disconnect", () => {
     console.log("❌ User disconnected:", socket.id);
   });
+
 });
 
 /* ============================

@@ -102,6 +102,21 @@ export const fetchTrafficLogs = async () => {
   }
 };
 
+export const sendUserMessage = async (senderId, receiverId, message) => {
+  const res = await apiClient.post("/messages/send", {
+    senderId,
+    receiverId,
+    message
+  });
+
+  return res.data;
+};
+
+export const getConversation = async (user1, user2) => {
+  const res = await apiClient.get(`/messages/conversation/${user1}/${user2}`);
+  return res.data;
+};
+
 /* ===============================
    AUTH
 ================================ */

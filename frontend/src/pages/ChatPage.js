@@ -1,13 +1,8 @@
 import { useState, useEffect, useRef } from "react";
-import { api } from "../services/api";
+import socket from "../socket";
 
 const CSS = `
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800;900&family=Playfair+Display:wght@700;900&display=swap');
-
-@keyframes fadeUp { 
-from{opacity:0;transform:translateY(18px)} 
-to{opacity:1;transform:translateY(0)} 
-}
 
 @keyframes blink { 
 0%,100%{opacity:1} 
@@ -18,7 +13,6 @@ to{opacity:1;transform:translateY(0)}
 background: rgba(255,255,255,0.65);
 backdrop-filter: blur(24px);
 border: 1px solid rgba(255,255,255,0.8);
-transition: all .35s cubic-bezier(0.16,1,0.3,1);
 }
 
 .msg-user{
@@ -41,76 +35,71 @@ max-width:70%;
 }
 `;
 
-export default function ChatPage(){
+export default function ChatPage() {
 
-const [messages,setMessages] = useState([]);
-const [input,setInput] = useState("");
-const [loading,setLoading] = useState(false);
+const [messages, setMessages] = useState([]);
+const [input, setInput] = useState("");
+const [loading, setLoading] = useState(false);
 
-const chatRef = useRef();
+const chatRef = useRef(null);
 
-useEffect(()=>{
-fetchMessages();
-},[]);
+/* =========================
+   RECEIVE MESSAGE
+========================= */
 
-const fetchMessages = async()=>{
-try{
+useEffect(() => {
 
-const res = await api.getChatHistory();
+const handleReceive = (data) => {
 
-if(res.success){
-setMessages(res.messages);
-}
-
-}catch(e){
-console.log("chat history error");
-}
-}
-
-const sendMessage = async()=>{
-
-if(!input.trim()) return;
-
-const userMsg = {role:"user",content:input};
-
-setMessages(prev=>[...prev,userMsg]);
-setInput("");
-setLoading(true);
-
-try{
-
-const res = await api.sendMessage(input);
-
-if(res.success){
-
-setMessages(prev=>[
-...prev,
-{role:"assistant",content:res.reply}
-]);
-
-}
-
-}catch(e){
-
-setMessages(prev=>[
-...prev,
-{role:"assistant",content:"⚠️ Error getting reply"}
-]);
-
-}
-
+setMessages(prev => [...prev, data]);
 setLoading(false);
 
-setTimeout(()=>{
-chatRef.current?.scrollTo({
-top:chatRef.current.scrollHeight,
-behavior:"smooth"
-})
-},100);
+setTimeout(() => {
+if (chatRef.current) {
+chatRef.current.scrollTo({
+top: chatRef.current.scrollHeight,
+behavior: "smooth"
+});
+}
+}, 100);
 
 };
 
-return(
+socket.on("receive_message", handleReceive);
+
+return () => {
+socket.off("receive_message", handleReceive);
+};
+
+}, []);
+
+/* =========================
+   SEND MESSAGE
+========================= */
+
+const sendMessage = () => {
+
+if (!input.trim()) return;
+
+const userMsg = {
+role: "user",
+content: input
+};
+
+setMessages(prev => [...prev, userMsg]);
+
+socket.emit("send_message", userMsg);
+
+setInput("");
+setLoading(true);
+
+};
+
+/* =========================
+   UI
+========================= */
+
+return (
 
 <div style={{
 fontFamily:"'DM Sans','Segoe UI',sans-serif",
@@ -181,17 +170,17 @@ gap:14
 }}
 >
 
-{messages.map((msg,i)=>(
+{messages.map((msg, i) => (
 <div
 key={i}
 style={{
 display:"flex",
 justifyContent:
-msg.role==="user"?"flex-end":"flex-start"
+msg.role === "user" ? "flex-end" : "flex-start"
 }}
 >
 
-<div className={msg.role==="user"?"msg-user":"msg-bot"}>
+<div className={msg.role === "user" ? "msg-user" : "msg-bot"}>
 {msg.content}
 </div>
 
@@ -199,7 +188,7 @@ msg.role==="user"?"flex-end":"flex-start"
 ))}
 
 {loading && (
-<div style={{display:"flex",gap:6}}>
+<div style={{display:"flex",justifyContent:"flex-start",gap:6}}>
 <div style={{animation:"blink 1s infinite"}}>•</div>
 <div style={{animation:"blink 1s infinite .2s"}}>•</div>
 <div style={{animation:"blink 1s infinite .4s"}}>•</div>
@@ -219,6 +208,9 @@ gap:10
 <input
 value={input}
 onChange={(e)=>setInput(e.target.value)}
+onKeyDown={(e)=>{
+if(e.key === "Enter") sendMessage();
+}}
 placeholder="Ask something..."
 style={{
 flex:1,
