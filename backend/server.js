@@ -4,10 +4,19 @@ const cors = require("cors");
 const http = require("http");
 const { Server } = require("socket.io");
 require("dotenv").config();
-const chatRoutes = require("./routes/chatRoutes");
+
+// Load routes carefully
+let authRoutes;
+try {
+  authRoutes = require("./routes/authRoutes");
+  console.log("✅ authRoutes loaded");
+} catch (err) {
+  console.error("❌ Error loading authRoutes:", err.message);
+}
+
 const app = express();
 const server = http.createServer(app);
-const messageRoutes = require("./routes/messageRoutes");
+
 // Socket.IO setup
 const io = new Server(server, {
   cors: {
@@ -19,21 +28,25 @@ const io = new Server(server, {
 // Middleware
 app.use(cors());
 app.use(express.json());
-app.use("/api/chat", chatRoutes);
-// Test route
+
+// Debug middleware
+app.use((req, res, next) => {
+  console.log(`📨 Incoming: ${req.method} ${req.path}`);
+  next();
+});
+
+// Routes
 app.get("/", (req, res) => {
+  console.log("Handling GET /");
   res.json({
     message: "⚡ Urjamitra Backend is Running!",
     status: "success"
   });
 });
 
-// API Routes
-app.use("/api/auth", require("./routes/authRoutes"));
-app.use("/api/listings", require("./routes/listingRoutes"));
-app.use("/api/transactions", require("./routes/transactionRoutes"));
-app.use("/api/users", require("./routes/userRoutes"));
-app.use("/api/messages", messageRoutes);
+if (authRoutes) {
+  app.use("/api/auth", authRoutes);
+}
 /* ============================
    SOCKET.IO EVENTS
 ============================ */

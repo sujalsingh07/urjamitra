@@ -10,6 +10,8 @@ const CSS = `
   @keyframes glow { 0%,100%{box-shadow:0 0 24px rgba(245,158,11,0.35)} 50%{box-shadow:0 0 48px rgba(245,158,11,0.6)} }
   @keyframes fadeUp { from{opacity:0;transform:translateY(24px)} to{opacity:1;transform:translateY(0)} }
   @keyframes shine { 100% { left: 150%; } }
+  @keyframes scale-bounce { 0%{transform:scale(0) rotate(-45deg); opacity:0} 50%{transform:scale(1.1)} 100%{transform:scale(1); opacity:1} }
+  @keyframes dot-fade { 0%,100%{opacity:0.3} 50%{opacity:1} }
   
   input:-webkit-autofill { -webkit-box-shadow:0 0 0 100px #fff inset !important; -webkit-text-fill-color:#451a03 !important; }
   
@@ -61,13 +63,104 @@ const CSS = `
 
 export default function Login() {
   const [isLogin, setIsLogin] = useState(true);
-  const [form, setForm] = useState({ name: '', email: '', password: '', address: '' });
+  const [form, setForm] = useState({ name: '', email: '', password: '' });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [mounted, setMounted] = useState(false);
+  const [otpStep, setOtpStep] = useState(null); // null, 'email', 'verify', 'password'
+  const [otp, setOtp] = useState('');
+  const [otpEmail, setOtpEmail] = useState('');
   const navigate = useNavigate();
 
   useEffect(() => { setTimeout(() => setMounted(true), 60); }, []);
+
+  // Email validation function
+  const isValidEmail = (email) => {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return emailRegex.test(email);
+  };
+
+  const handleRequestOTP = async () => {
+    setError(''); setLoading(true);
+    try {
+      if (!form.email) {
+        setError('Please enter your email address');
+        setLoading(false);
+        return;
+      }
+      if (!isValidEmail(form.email)) {
+        setError('Please enter a valid email address');
+        setLoading(false);
+        return;
+      }
+      const apiBase = process.env.REACT_APP_API_BASE_URL || 'http://localhost:5001/api';
+      const res = await axios.post(`${apiBase}/auth/request-otp`, { email: form.email });
+      if (res.data.success) {
+        setOtpEmail(form.email);
+        setOtpStep('verify');
+      }
+    } catch (err) {
+      setError(err.response?.data?.message || 'Failed to send OTP. Please try again.');
+    } finally { setLoading(false); }
+  };
+
+  const handleVerifyOTP = async () => {
+    setError(''); setLoading(true);
+    try {
+      if (!otp || otp.length !== 6) {
+        setError('Please enter a valid 6-digit OTP');
+        setLoading(false);
+        return;
+      }
+      const apiBase = process.env.REACT_APP_API_BASE_URL || 'http://localhost:5001/api';
+      const res = await axios.post(`${apiBase}/auth/verify-otp`, { email: otpEmail, otp });
+      if (res.data.success) {
+        setOtpStep('password');
+        setForm({ ...form, email: otpEmail });
+      }
+    } catch (err) {
+      setError(err.response?.data?.message || 'Failed to verify OTP. Please try again.');
+    } finally { setLoading(false); }
+  };
+
+  const handleCompleteSignup = async () => {
+    setError(''); setLoading(true);
+    try {
+      if (!form.name || !form.password) {
+        setError('Please fill in all fields');
+        setLoading(false);
+        return;
+      }
+      if (form.password.length < 6) {
+        setError('Password must be at least 6 characters');
+        setLoading(false);
+        return;
+      }
+      const apiBase = process.env.REACT_APP_API_BASE_URL || 'http://localhost:5001/api';
+      const res = await axios.post(`${apiBase}/auth/signup-with-otp`, { 
+        name: form.name, 
+        email: form.email, 
+        password: form.password, 
+        address: 'Campus' // Default address since user removed it
+      });
+      if (res.data.success) {
+        localStorage.setItem('token', res.data.token);
+        localStorage.setItem('user', JSON.stringify(res.data.user));
+        setOtpStep('success');
+      }
+    } catch (err) {
+      setError(err.response?.data?.message || 'Something went wrong. Please try again.');
+     } finally { setLoading(false); }
+  };
+
+  useEffect(() => {
+    if (otpStep === 'success') {
+      const timer = setTimeout(() => {
+        navigate('/dashboard');
+      }, 1500);
+      return () => clearTimeout(timer);
+    }
+  }, [otpStep, navigate]);
 
   const handleSubmit = async () => {
     setError(''); setLoading(true);
@@ -136,7 +229,7 @@ export default function Login() {
         {/* iOS Pill Toggle */}
         <div style={{ display: 'flex', background: 'rgba(253,230,138,0.3)', borderRadius: 14, padding: 6, marginBottom: 28, boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.02)' }}>
           {['Login', 'Sign Up'].map((label, i) => (
-            <button key={label} onClick={() => { setIsLogin(i === 0); setError(''); }}
+            <button key={label} onClick={() => { setIsLogin(i === 0); setError(''); setOtpStep(null); setOtp(''); }}
               style={{
                 flex: 1, padding: '12px', borderRadius: 10, border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 800, fontSize: 14, letterSpacing: -0.2, transition: 'all 0.4s cubic-bezier(0.16, 1, 0.3, 1)',
                 background: (i === 0) === isLogin ? '#fff' : 'transparent',
@@ -153,24 +246,114 @@ export default function Login() {
           <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', color: '#b91c1c', fontSize: 13, padding: '12px 16px', borderRadius: 12, marginBottom: 20 }}>❌ {error}</div>
         )}
 
-        {/* Fields */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-          {!isLogin && <input type="text" placeholder="Your full name" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} className="premium-input" />}
-          <input type="email" placeholder="Email address" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} className="premium-input" />
-          <input type="password" placeholder="Password (min 6 characters)" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} className="premium-input" />
-          {!isLogin && <>
-            <input type="text" placeholder="Home address (e.g. House #7, Maple Lane)" value={form.address} onChange={e => setForm({ ...form, address: e.target.value })} className="premium-input" />
-            <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', background: 'rgba(253,230,138,0.2)', padding: '12px 16px', borderRadius: 12, marginTop: 4 }}>
-              <span style={{ fontSize: 16 }}>📍</span>
-              <p style={{ margin: 0, fontSize: 12, color: '#92400e', fontWeight: 600, lineHeight: 1.4 }}>We use your address to connect you with nearby neighbors</p>
+        {/* LOGIN FORM */}
+        {isLogin ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <input type="email" placeholder="Email address" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} className="premium-input" />
+            <input type="password" placeholder="Password (min 6 characters)" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} className="premium-input" />
+            <button onClick={handleSubmit} disabled={loading} className="gradient-btn" style={{ width: '100%', marginTop: 24 }}>
+              {loading ? '⏳ Please wait...' : 'Login to Urjamitra ⚡'}
+            </button>
+          </div>
+        ) : otpStep === null ? (
+          /* SIGNUP STEP 1: Name & Email Entry */
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <input 
+              type="text" 
+              placeholder="Your full name" 
+              value={form.name} 
+              onChange={e => setForm({ ...form, name: e.target.value })} 
+              className="premium-input" 
+              autoFocus
+            />
+            <input 
+              type="email" 
+              placeholder="Email address" 
+              value={form.email} 
+              onChange={e => setForm({ ...form, email: e.target.value })} 
+              className="premium-input" 
+            />
+            <button onClick={handleRequestOTP} disabled={loading} className="gradient-btn" style={{ width: '100%', marginTop: 24 }}>
+              {loading ? '⏳ Sending OTP...' : 'Send OTP 📧'}
+            </button>
+          </div>
+        ) : otpStep === 'verify' ? (
+          /* SIGNUP STEP 2: OTP Verification */
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <div style={{ background: 'rgba(251,146,60,0.15)', border: '1px solid rgba(251,146,60,0.4)', padding: '14px 16px', borderRadius: 12, marginBottom: 8 }}>
+              <p style={{ margin: 0, fontSize: 13, color: '#92400e', fontWeight: 600 }}>Code sent to {otpEmail}</p>
             </div>
-          </>}
-        </div>
-
-        {/* Submit */}
-        <button onClick={handleSubmit} disabled={loading} className="gradient-btn" style={{ width: '100%', marginTop: 24 }}>
-          {loading ? '⏳ Please wait...' : isLogin ? 'Login to Urjamitra ⚡' : 'Join Urjamitra 🌱'}
-        </button>
+            <input 
+              type="text" 
+              placeholder="000000" 
+              value={otp} 
+              onChange={e => setOtp(e.target.value.slice(0, 6))}
+              maxLength="6"
+              className="premium-input"
+              style={{ fontSize: 24, letterSpacing: '8px', textAlign: 'center', fontWeight: 700 }}
+              autoFocus
+            />
+            <button onClick={handleVerifyOTP} disabled={loading} className="gradient-btn" style={{ width: '100%', marginTop: 24 }}>
+              {loading ? '⏳ Verifying...' : 'Verify OTP ✓'}
+            </button>
+            <button onClick={() => { setOtpStep(null); setOtp(''); }} disabled={loading} style={{
+              background: 'transparent',
+              color: '#ea580c',
+              border: '1px solid #fed7aa',
+              borderRadius: 16,
+              padding: 18,
+              fontWeight: 800,
+              fontSize: 15,
+              cursor: 'pointer',
+              transition: 'all 0.3s'
+            }} onMouseEnter={e => e.target.style.background = 'rgba(253,230,138,0.2)'} onMouseLeave={e => e.target.style.background = 'transparent'}>
+              ← Back
+            </button>
+          </div>
+        ) : otpStep === 'password' ? (
+          /* SIGNUP STEP 3: Password Entry */
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <input type="password" placeholder="Password (min 6 characters)" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} className="premium-input" autoFocus />
+            <button onClick={handleCompleteSignup} disabled={loading} className="gradient-btn" style={{ width: '100%', marginTop: 24 }}>
+              {loading ? '⏳ Creating account...' : 'Join Urjamitra 🌱'}
+            </button>
+            <button onClick={() => { setOtpStep('verify'); setForm({ ...form, password: '' }); }} disabled={loading} style={{
+              background: 'transparent',
+              color: '#ea580c',
+              border: '1px solid #fed7aa',
+              borderRadius: 16,
+              padding: 18,
+              fontWeight: 800,
+              fontSize: 15,
+              cursor: 'pointer',
+              transition: 'all 0.3s'
+            }} onMouseEnter={e => e.target.style.background = 'rgba(253,230,138,0.2)'} onMouseLeave={e => e.target.style.background = 'transparent'}>
+              ← Back
+            </button>
+          </div>
+        ) : otpStep === 'success' ? (
+          /* SIGNUP SUCCESS: Thank You Message */
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14, justifyContent: 'center', alignItems: 'center', textAlign: 'center', minHeight: 320 }}>
+            <div style={{ animation: 'scale-bounce 0.6s ease-in-out', fontSize: 64 }}>
+              ✨
+            </div>
+            <h2 style={{ margin: 0, fontSize: 28, fontWeight: 900, color: '#451a03', fontFamily: "'Playfair Display',serif" }}>
+              Welcome to Urjamitra!
+            </h2>
+            <p style={{ margin: 0, fontSize: 16, color: '#92400e', fontWeight: 600, lineHeight: 1.6 }}>
+              Thank you for joining UrjaMitra.
+            </p>
+            <p style={{ margin: '8px 0 0 0', fontSize: 14, color: '#a16207', fontWeight: 500 }}>
+              You're now part of our energy community! 🌱
+            </p>
+            <div style={{ marginTop: 16, display: 'flex', gap: 8, fontSize: 12, color: '#a16207' }}>
+              <span>Redirecting to dashboard</span>
+              <span style={{ animation: 'dot-fade 1.5s infinite' }}>.</span>
+              <span style={{ animation: 'dot-fade 1.5s infinite', animationDelay: '0.3s' }}>.</span>
+              <span style={{ animation: 'dot-fade 1.5s infinite', animationDelay: '0.6s' }}>.</span>
+            </div>
+          </div>
+        ) : null}
 
         <p style={{ textAlign: 'center', fontSize: 12, color: '#a16207', marginTop: 20, marginBottom: 0, fontWeight: 600 }}>Your neighborhood energy community 🏘️</p>
       </div>
