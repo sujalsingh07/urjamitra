@@ -45,7 +45,14 @@ router.post('/create', authenticateToken, async (req, res) => {
 // Get all available listings
 router.get('/all', async (req, res) => {
   try {
-    const listings = await Listing.find({ available: true, expiresAt: { $gt: new Date() } })
+    const listings = await Listing.find({
+      available: true,
+      $or: [
+        { expiresAt: { $gt: new Date() } },
+        { expiresAt: null },
+        { expiresAt: { $exists: false } }
+      ]
+    })
       .populate('seller', 'name email address rating reviewCount')
       .sort({ createdAt: -1 });
     

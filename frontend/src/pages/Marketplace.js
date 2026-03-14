@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../services/api';
 
 const CSS = `
@@ -72,49 +73,193 @@ const CSS = `
 `;
 
 export default function Marketplace() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [viewMode, setViewMode] = useState('all');
   const [filter, setFilter] = useState('all');
   const [showSuccess, setShowSuccess] = useState(false);
   const [showListModal, setShowListModal] = useState(false);
   const [listings, setListings] = useState([]);
+  const [myListings, setMyListings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [listingForm, setListingForm] = useState({ units: '', pricePerUnit: '', address: '' });
+  const [listingForm, setListingForm] = useState({ units: '', pricePerUnit: '' });
   const [done, setDone] = useState(false);
+  const [buyModal, setBuyModal] = useState(null);   // listing object
+  const [buyUnits, setBuyUnits] = useState('');
+  const [buyLoading, setBuyLoading] = useState(false);
+  const [buyResult, setBuyResult] = useState(null); // { status, message }
+  const [walletBalance, setWalletBalance] = useState(0);
 
   useEffect(() => { fetchListings(); }, []);
+
+  useEffect(() => {
+    if (location.state?.openListModal) {
+      setShowListModal(true);
+    }
+  }, [location.state]);
+
+  const getCurrentUserId = () => {
+    try {
+      const user = JSON.parse(localStorage.getItem('user') || '{}');
+      return user.id || user._id || null;
+    } catch {
+      return null;
+    }
+  };
+
+  const getSellerId = (listing) => listing?.seller?._id || listing?.seller?.id || listing?.seller;
+
+  const mapTxErrorMessage = (res) => {
+    const code = res?.code;
+    if (code === 'LISTING_UNAVAILABLE') return 'This listing is no longer available or has fewer units now.';
+    if (code === 'INSUFFICIENT_WALLET') return 'Insufficient wallet balance for this request.';
+    if (code === 'FORBIDDEN_ACTION') return 'You cannot buy your own listing.';
+    if (code === 'INVALID_REQUEST') return 'Enter a valid units value before requesting.';
+    return res?.message || res?.error || 'Unable to place request right now. Please try again.';
+  };
+
+  const loadWalletFromProfile = async () => {
+    const profileRes = await api.getMyProfile();
+    if (profileRes?.success && profileRes?.user) {
+      const nextWallet = Number(profileRes.user.wallet || 0);
+      setWalletBalance(nextWallet);
+      try {
+        const current = JSON.parse(localStorage.getItem('user') || '{}');
+        localStorage.setItem('user', JSON.stringify({ ...current, ...profileRes.user }));
+      } catch {
+        // no-op: avoid blocking UI on localStorage parse failures
+      }
+      return;
+    }
+
+    try {
+      const localUser = JSON.parse(localStorage.getItem('user') || '{}');
+      setWalletBalance(Number(localUser.wallet || 0));
+    } catch {
+      setWalletBalance(0);
+    }
+  };
 
   const fetchListings = async () => {
     try {
       setLoading(true);
-      const res = await api.getListings();
-      if (res.success) setListings(res.listings);
-      else setError(res.message || 'Failed to fetch listings');
+
+      const [allRes, mineRes] = await Promise.all([api.getListings(), api.getMyListings()]);
+
+      if (allRes.success) {
+        setListings(allRes.listings || []);
+      } else {
+        setListings([]);
+        setError(allRes.message || 'Failed to fetch listings');
+      }
+
+      if (mineRes.success) {
+        setMyListings(mineRes.listings || []);
+      } else {
+        setMyListings([]);
+      }
+
+      await loadWalletFromProfile();
     } catch { setError('Error fetching listings'); }
     finally { setLoading(false); }
   };
 
   const handleCreateListing = async () => {
     try {
-      if (!listingForm.units || !listingForm.pricePerUnit || !listingForm.address) { setError('Please fill all fields'); return; }
-      const res = await api.createListing({ units: parseFloat(listingForm.units), pricePerUnit: parseFloat(listingForm.pricePerUnit), location: { address: listingForm.address } });
-      if (res.success) { setShowListModal(false); setListingForm({ units: '', pricePerUnit: '', address: '' }); setDone(true); setTimeout(() => setDone(false), 3000); fetchListings(); }
+      if (!listingForm.units || !listingForm.pricePerUnit) { setError('Please fill all fields'); return; }
+
+      const userStr = localStorage.getItem('user');
+      const user = userStr ? JSON.parse(userStr) : null;
+      const savedAddress = user?.address;
+      const savedLatitude = user?.location?.latitude;
+      const savedLongitude = user?.location?.longitude;
+
+      if (!savedAddress || savedAddress === 'Campus') {
+        setError('Please complete your profile address first.');
+        return;
+      }
+
+      const payload = {
+        units: parseFloat(listingForm.units),
+        pricePerUnit: parseFloat(listingForm.pricePerUnit),
+        location: {
+          address: savedAddress,
+          latitude: Number.isFinite(savedLatitude) ? savedLatitude : undefined,
+          longitude: Number.isFinite(savedLongitude) ? savedLongitude : undefined,
+        }
+      };
+
+      const res = await api.createListing(payload);
+
+      if (res.success) { setShowListModal(false); setListingForm({ units: '', pricePerUnit: '' }); setDone(true); setTimeout(() => setDone(false), 3000); fetchListings(); }
       else setError(res.message);
     } catch { setError('Error creating listing'); }
   };
 
-  const handlePurchase = async (listingId) => {
-    try {
-      const unitsStr = prompt('How many kWh do you want to purchase?');
-      if (!unitsStr) return;
-      const res = await api.purchaseEnergy(listingId, parseFloat(unitsStr));
-      if (res.success) { setShowSuccess(true); setTimeout(() => setShowSuccess(false), 3000); fetchListings(); }
-      else setError(res.message);
-    } catch { setError('Error purchasing energy'); }
+  const openBuyModal = (listing) => {
+    setBuyModal(listing);
+    setBuyUnits('');
+    setBuyResult(null);
+    loadWalletFromProfile();
   };
 
-  const filtered = listings
+  const handleRequestTransaction = async () => {
+    if (!buyModal || !buyUnits || parseFloat(buyUnits) <= 0) return;
+    setBuyLoading(true);
+    try {
+      const res = await api.requestTransaction(buyModal._id, parseFloat(buyUnits));
+      if (res.success) {
+        setBuyResult({ status: 'ok', message: 'Order placed! Waiting for seller to confirm.' });
+        await fetchListings();
+        setTimeout(() => {
+          setBuyModal(null);
+          setBuyResult(null);
+          setShowSuccess(true);
+          setTimeout(() => setShowSuccess(false), 4000);
+        }, 2200);
+      } else {
+        setBuyResult({ status: 'err', message: mapTxErrorMessage(res) });
+      }
+    } catch (err) {
+      setBuyResult({ status: 'err', message: mapTxErrorMessage(err?.response?.data || { error: 'Network or server error' }) });
+    } finally {
+      setBuyLoading(false);
+    }
+  };
+
+  const handleDeleteListing = async (listingId) => {
+    try {
+      const confirmed = window.confirm('Remove this listing?');
+      if (!confirmed) return;
+
+      const res = await api.deleteListing(listingId);
+      if (res.success) {
+        setDone(true);
+        setTimeout(() => setDone(false), 3000);
+        fetchListings();
+      } else {
+        setError(res.message || 'Failed to remove listing');
+      }
+    } catch {
+      setError('Error removing listing');
+    }
+  };
+
+  const currentUserId = getCurrentUserId();
+  const allNeighborListings = listings.filter((l) => {
+    const sellerId = getSellerId(l);
+    return !currentUserId || String(sellerId) !== String(currentUserId);
+  });
+
+  const baseListings = viewMode === 'my' ? myListings : allNeighborListings;
+
+  const filtered = baseListings
     .filter(l => filter === 'available' ? l.available : true)
     .sort((a, b) => filter === 'cheap' ? a.pricePerUnit - b.pricePerUnit : 0);
+
+  const neighborAvailableCount = allNeighborListings.filter((l) => l.available).length;
+  const myAvailableCount = myListings.filter((l) => l.available).length;
 
   return (
     <div style={{
@@ -134,7 +279,7 @@ export default function Marketplace() {
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#16a34a', animation: 'blink 2.5s infinite', boxShadow: '0 0 8px rgba(22,163,74,0.6)' }} />
               <p style={{ margin: 0, fontSize: 13, color: '#15803d', fontWeight: 700 }}>
-                {filtered.filter(l => l.available).length} listings available near you
+                {viewMode === 'my' ? `${myAvailableCount} active listing${myAvailableCount === 1 ? '' : 's'} by you` : `${neighborAvailableCount} listings available near you`}
               </p>
             </div>
           </div>
@@ -154,7 +299,7 @@ export default function Marketplace() {
         )}
         {showSuccess && (
           <div className="um-card" style={{ background: 'rgba(220,252,231,0.85)', border: '1px solid #86efac', color: '#15803d', borderRadius: 16, padding: '16px 20px', marginBottom: 20, display: 'flex', alignItems: 'center', gap: 12, animation: 'fadeUp 0.4s cubic-bezier(0.16, 1, 0.3, 1)' }}>
-            <span style={{ fontSize: 20 }}>⚡</span> <strong>Purchase successful!</strong> Energy is on its way.
+            <span style={{ fontSize: 20 }}>⚡</span> <strong>Order placed!</strong> Waiting for seller to confirm — check Transactions for status.
           </div>
         )}
         {error && (
@@ -162,22 +307,40 @@ export default function Marketplace() {
         )}
 
         {/* Filters */}
-        <div style={{ display: 'flex', gap: 10, marginBottom: 24, flexWrap: 'wrap', animation: 'fadeUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) 0.2s both' }}>
-          {[['all', 'All Listings'], ['available', 'Available Now'], ['cheap', 'Cheapest First']].map(([k, l]) => (
-            <button key={k} className={`pill ${filter === k ? 'active' : ''}`} onClick={() => setFilter(k)}
+        <div style={{ display: 'flex', gap: 10, marginBottom: 14, flexWrap: 'wrap', animation: 'fadeUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) 0.15s both' }}>
+          {[['all', 'Community Listings'], ['my', 'My Listings']].map(([k, l]) => (
+            <button key={k} className={`pill ${viewMode === k ? 'active' : ''}`} onClick={() => setViewMode(k)}
               style={{
-                padding: '10px 20px', borderRadius: 14, border: '1px solid',
-                borderColor: filter === k ? '#ea580c' : 'rgba(253,230,138,0.8)',
-                background: filter === k ? 'linear-gradient(135deg,#f59e0b,#ea580c)' : 'rgba(255,255,255,0.6)',
-                backdropFilter: filter === k ? 'none' : 'blur(12px)',
-                color: filter === k ? '#fff' : '#92400e',
+                padding: '10px 18px', borderRadius: 14, border: '1px solid',
+                borderColor: viewMode === k ? '#92400e' : 'rgba(253,230,138,0.8)',
+                background: viewMode === k ? 'linear-gradient(135deg,#f59e0b,#ea580c)' : 'rgba(255,255,255,0.65)',
+                color: viewMode === k ? '#fff' : '#92400e',
                 fontWeight: 800, fontSize: 13,
-                boxShadow: filter === k ? '0 8px 16px rgba(234,88,12,0.25), inset 0 1px 1px rgba(255,255,255,0.4)' : 'none'
+                boxShadow: viewMode === k ? '0 8px 16px rgba(234,88,12,0.25), inset 0 1px 1px rgba(255,255,255,0.4)' : 'none'
               }}>
               {l}
             </button>
           ))}
         </div>
+
+        {viewMode === 'all' && (
+          <div style={{ display: 'flex', gap: 10, marginBottom: 24, flexWrap: 'wrap', animation: 'fadeUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) 0.2s both' }}>
+            {[['all', 'All'], ['available', 'Available Now'], ['cheap', 'Cheapest First']].map(([k, l]) => (
+              <button key={k} className={`pill ${filter === k ? 'active' : ''}`} onClick={() => setFilter(k)}
+                style={{
+                  padding: '10px 20px', borderRadius: 14, border: '1px solid',
+                  borderColor: filter === k ? '#ea580c' : 'rgba(253,230,138,0.8)',
+                  background: filter === k ? 'linear-gradient(135deg,#f59e0b,#ea580c)' : 'rgba(255,255,255,0.6)',
+                  backdropFilter: filter === k ? 'none' : 'blur(12px)',
+                  color: filter === k ? '#fff' : '#92400e',
+                  fontWeight: 800, fontSize: 13,
+                  boxShadow: filter === k ? '0 8px 16px rgba(234,88,12,0.25), inset 0 1px 1px rgba(255,255,255,0.4)' : 'none'
+                }}>
+                {l}
+              </button>
+            ))}
+          </div>
+        )}
 
         {/* Listings */}
         {loading ? (
@@ -188,7 +351,7 @@ export default function Marketplace() {
         ) : filtered.length === 0 ? (
           <div className="um-card" style={{ textAlign: 'center', padding: '80px 0', borderRadius: 24 }}>
             <div style={{ fontSize: 48, marginBottom: 16 }}>📭</div>
-            <p style={{ color: '#92400e', fontSize: 15, fontWeight: 600 }}>No listings yet. Be the first to share!</p>
+            <p style={{ color: '#92400e', fontSize: 15, fontWeight: 600 }}>{viewMode === 'my' ? 'You have no listings yet.' : 'No listings from neighbors right now.'}</p>
             <button onClick={() => setShowListModal(true)} className="gradient-btn" style={{ marginTop: 24, padding: '14px 28px', fontSize: 15 }}>
               + List Energy
             </button>
@@ -220,10 +383,28 @@ export default function Marketplace() {
                       ₹{listing.pricePerUnit}<span style={{ fontSize: 14, color: '#92400e', fontWeight: 600 }}>/kWh</span>
                     </div>
                     <p style={{ margin: '0 0 12px', fontSize: 13, color: '#a16207', fontWeight: 700 }}>{listing.units} kWh available</p>
-                    {listing.available ? (
-                      <button onClick={() => handlePurchase(listing._id)} className="gradient-btn" style={{ padding: '8px 24px' }}>
-                        Buy ⚡
+                    {viewMode === 'my' ? (
+                      <button onClick={() => handleDeleteListing(listing._id)} style={{
+                        background: '#fff1f2',
+                        color: '#be123c',
+                        border: '1px solid #fda4af',
+                        borderRadius: 12,
+                        padding: '9px 18px',
+                        fontWeight: 800,
+                        fontSize: 13,
+                        cursor: 'pointer'
+                      }}>
+                        Remove
                       </button>
+                    ) : listing.available ? (
+                      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                        <button onClick={() => navigate('/messages', { state: { autoOpenUser: listing.seller } })} style={{ background: '#fffbeb', color: '#d97706', border: '1px solid #fde68a', borderRadius: 12, padding: '8px 16px', fontWeight: 800, fontSize: 13, cursor: 'pointer', transition: 'all 0.2s', boxShadow: '0 4px 12px rgba(245,158,11,0.1)' }}>
+                          💬 Ask
+                        </button>
+                        <button onClick={() => openBuyModal(listing)} className="gradient-btn" style={{ padding: '8px 24px' }}>
+                          Buy ⚡
+                        </button>
+                      </div>
                     ) : (
                       <span style={{ background: '#fef9c3', color: '#a16207', fontSize: 12, fontWeight: 700, padding: '8px 16px', borderRadius: 10, border: '1px solid #fde68a' }}>Sold Out</span>
                     )}
@@ -267,7 +448,7 @@ export default function Marketplace() {
                 <button onClick={() => setShowListModal(false)} style={{ background: '#fef9c3', border: '1px solid #fde68a', borderRadius: '50%', width: 36, height: 36, cursor: 'pointer', fontSize: 14, color: '#92400e', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s' }}>✕</button>
               </div>
 
-              {[['units', 'Units available (kWh)', 'e.g. 5', 'number'], ['pricePerUnit', 'Price per kWh (₹)', 'e.g. 18', 'number'], ['address', 'Your Address', 'e.g. House #7, Maple Lane', 'text']].map(([f, l, p, t]) => (
+              {[['units', 'Units available (kWh)', 'e.g. 5', 'number'], ['pricePerUnit', 'Price per kWh (₹)', 'e.g. 18', 'number']].map(([f, l, p, t]) => (
                 <div key={f} style={{ marginBottom: 16 }}>
                   <label style={{ fontSize: 11, fontWeight: 800, color: '#a16207', display: 'block', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>{l}</label>
                   <input type={t} placeholder={p} value={listingForm[f]} onChange={e => setListingForm({ ...listingForm, [f]: e.target.value })} className="premium-input" />
@@ -290,6 +471,88 @@ export default function Marketplace() {
                 <button onClick={handleCreateListing} className="gradient-btn" style={{ flex: 2, padding: '16px', borderRadius: 16, fontSize: 15 }}>Post Listing ⚡</button>
               </div>
             </div>
+          </div>
+        )
+      }
+
+      {/* BUY / REQUEST MODAL */}
+      {buyModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(69,26,3,0.4)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 50, backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', animation: 'fadeUp 0.3s ease' }}>
+          <div style={{ background: 'rgba(255,253,245,0.97)', borderRadius: '32px 32px 0 0', padding: '32px 32px 48px', width: '100%', maxWidth: 540, boxShadow: '0 -24px 80px rgba(180,130,0,0.2), 0 0 0 1px rgba(255,255,255,0.8)', animation: 'slideUp 0.5s cubic-bezier(0.16, 1, 0.3, 1)', position: 'relative' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
+              <div>
+                <h2 style={{ margin: '0 0 4px', fontSize: 22, fontWeight: 900, color: '#451a03', letterSpacing: -0.5 }}>⚡ Request Energy</h2>
+                <p style={{ margin: 0, fontSize: 13, color: '#92400e', fontWeight: 500 }}>From <strong>{buyModal.seller?.name || 'Seller'}</strong> · ₹{buyModal.pricePerUnit}/kWh · {buyModal.units} kWh available</p>
+              </div>
+              <button onClick={() => setBuyModal(null)} style={{ background: '#fef9c3', border: '1px solid #fde68a', borderRadius: '50%', width: 36, height: 36, cursor: 'pointer', fontSize: 14, color: '#92400e', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
+            </div>
+
+            {/* Wallet balance pill */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'rgba(255,251,235,0.8)', border: '1px solid #fde68a', borderRadius: 12, padding: '10px 16px', marginBottom: 20 }}>
+              <span style={{ fontSize: 12, color: '#92400e', fontWeight: 700 }}>💳 Your Wallet Balance</span>
+              <span style={{ fontSize: 16, fontWeight: 900, color: walletBalance > 0 ? '#15803d' : '#b91c1c', letterSpacing: -0.5 }}>₹{walletBalance}</span>
+            </div>
+
+            {buyResult ? (
+              <div style={{ textAlign: 'center', padding: '24px 0' }}>
+                <div style={{ fontSize: 48, marginBottom: 12 }}>{buyResult.status === 'ok' ? '✅' : '❌'}</div>
+                <p style={{ fontWeight: 800, fontSize: 16, color: buyResult.status === 'ok' ? '#15803d' : '#b91c1c', margin: 0 }}>{buyResult.message}</p>
+                {buyResult.status === 'ok' && <p style={{ margin: '8px 0 0', fontSize: 13, color: '#92400e' }}>You'll see the status update in Transactions.</p>}
+                {buyResult.status === 'err' && (
+                  <button onClick={() => setBuyResult(null)} style={{ marginTop: 14, background: '#fff7ed', border: '1px solid #fdba74', color: '#9a3412', borderRadius: 10, padding: '8px 14px', cursor: 'pointer', fontWeight: 700, fontSize: 12 }}>
+                    Try Again
+                  </button>
+                )}
+              </div>
+            ) : (
+              <>
+                <div style={{ marginBottom: 16 }}>
+                  <label style={{ fontSize: 11, fontWeight: 800, color: '#a16207', display: 'block', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>Units to request (kWh)</label>
+                  <input type="number" placeholder={`Max ${buyModal.units} kWh`} max={buyModal.units} min={0.1} step={0.1} value={buyUnits} onChange={e => setBuyUnits(e.target.value)} className="premium-input" />
+                </div>
+
+                {buyUnits && parseFloat(buyUnits) > 0 && (() => {
+                  const requested = parseFloat(buyUnits);
+                  const total = requested * buyModal.pricePerUnit;
+                  const overLimit = requested > buyModal.units;
+                  const canAfford = walletBalance >= total;
+                  const isInvalid = overLimit || !canAfford;
+                  return (
+                    <div style={{ background: isInvalid ? '#fff1f2' : '#f0fdf4', border: `1px solid ${isInvalid ? '#fda4af' : '#86efac'}`, borderRadius: 16, padding: '16px 20px', marginBottom: 16, animation: 'fadeUp 0.3s ease' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                        <span style={{ fontSize: 13, color: isInvalid ? '#b91c1c' : '#15803d', fontWeight: 600 }}>{buyUnits} kWh × ₹{buyModal.pricePerUnit}</span>
+                        <span style={{ fontSize: 18, fontWeight: 900, color: isInvalid ? '#b91c1c' : '#15803d' }}>₹{total.toFixed(0)}</span>
+                      </div>
+                      {overLimit ? (
+                        <p style={{ margin: 0, fontSize: 11, color: '#b91c1c', fontWeight: 700 }}>⚠ Only {buyModal.units} kWh available — reduce your request</p>
+                      ) : !canAfford ? (
+                        <p style={{ margin: 0, fontSize: 11, color: '#b91c1c', fontWeight: 700 }}>⚠ Insufficient balance — you need ₹{(total - walletBalance).toFixed(0)} more</p>
+                      ) : (
+                        <p style={{ margin: 0, fontSize: 11, color: '#16a34a', fontWeight: 600 }}>Amount held from your wallet · released immediately if seller declines</p>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                <div style={{ background: '#fffbeb', border: '1px solid #fde047', borderRadius: 14, padding: '12px 16px', marginBottom: 24 }}>
+                  <p style={{ margin: 0, fontSize: 12, color: '#92400e', display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span>⏱</span> Seller has <strong>10 minutes</strong> to accept. Funds auto-refunded if they don't respond.
+                  </p>
+                </div>
+
+                <div style={{ display: 'flex', gap: 12 }}>
+                  <button onClick={() => setBuyModal(null)} style={{ flex: 1, padding: '16px', background: 'rgba(253,230,138,0.3)', color: '#92400e', border: '1px solid rgba(253,230,138,0.8)', borderRadius: 16, fontWeight: 800, fontSize: 15, cursor: 'pointer', fontFamily: 'inherit' }}>Cancel</button>
+                  <button
+                    onClick={handleRequestTransaction}
+                    disabled={buyLoading || !buyUnits || parseFloat(buyUnits) <= 0 || parseFloat(buyUnits) > buyModal.units || walletBalance < parseFloat(buyUnits) * buyModal.pricePerUnit}
+                    className="gradient-btn"
+                    style={{ flex: 2, padding: '16px', borderRadius: 16, fontSize: 15, opacity: (!buyUnits || parseFloat(buyUnits) <= 0 || parseFloat(buyUnits) > buyModal.units || walletBalance < parseFloat(buyUnits) * buyModal.pricePerUnit) ? 0.5 : 1 }}>
+                    {buyLoading ? 'Placing…' : 'Confirm Request ⚡'}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
           </div>
         )
       }

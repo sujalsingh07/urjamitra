@@ -7,6 +7,15 @@ const createToken = (id) => {
   return jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: '7d' });
 };
 
+const serializeUser = (user) => ({
+  id: user._id,
+  name: user.name,
+  email: user.email,
+  mobile: user.mobile,
+  address: user.address,
+  location: user.location,
+});
+
 exports.signup = async (req, res) => {
   try {
     const { name, email, password, address } = req.body;
@@ -19,7 +28,7 @@ exports.signup = async (req, res) => {
     }
     const user = await User.create({ name, email, password, address });
     const token = createToken(user._id);
-    res.status(201).json({ success: true, token, user: { id: user._id, name: user.name, email: user.email, address: user.address }});
+    res.status(201).json({ success: true, token, user: serializeUser(user) });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -40,7 +49,7 @@ exports.login = async (req, res) => {
       return res.status(401).json({ success: false, message: 'Incorrect password' });
     }
     const token = createToken(user._id);
-    res.status(200).json({ success: true, token, user: { id: user._id, name: user.name, email: user.email, address: user.address }});
+    res.status(200).json({ success: true, token, user: serializeUser(user) });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -178,12 +187,7 @@ exports.signupWithOTP = async (req, res) => {
     res.status(201).json({
       success: true,
       token,
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        address: user.address,
-      },
+      user: serializeUser(user),
       message: 'Signup successful! Welcome to Urjamitra.',
     });
   } catch (error) {

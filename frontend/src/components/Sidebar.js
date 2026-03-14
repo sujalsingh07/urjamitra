@@ -8,7 +8,12 @@ export default function Sidebar({ isOpen, close }) {
         { path: '/marketplace', label: 'Marketplace', icon: '🏪' },
         { path: '/map', label: 'Energy Map', icon: '📍' },
         { path: '/transactions', label: 'Transactions', icon: '📊' },
+        { path: '/messages', label: 'Messages', icon: '💬' },
     ];
+
+    const userStr = localStorage.getItem('user');
+    const user = userStr ? JSON.parse(userStr) : null;
+    const initial = user?.name ? user.name.charAt(0).toUpperCase() : 'U';
 
     return (
         <>
@@ -18,7 +23,10 @@ export default function Sidebar({ isOpen, close }) {
         .sidebar-link { display: flex; align-items: center; gap: 14px; padding: 14px 28px; color: #92400e; font-weight: 700; font-size: 15px; text-decoration: none; transition: all 0.2s; border-right: 4px solid transparent; cursor: pointer; margin-bottom: 4px; }
         .sidebar-link:hover { background: rgba(245,158,11,0.08); color: #b45309; }
         .sidebar-link.active { background: linear-gradient(90deg, rgba(253,230,138,0.3), rgba(253,230,138,0.1)); border-right-color: #f59e0b; color: #d97706; }
-        .sidebar-logo { display:flex; align-items:center; gap:12px; padding:0 28px; margin-bottom:48px; }
+        .sidebar-logo { display:flex; align-items:center; gap:12px; padding:0 28px; margin-bottom: 24px; }
+        .sidebar-profile { display:flex; flex-direction:column; align-items:center; padding: 16px 28px; margin-bottom: 32px; cursor: pointer; transition: transform 0.2s; }
+        .sidebar-profile:hover { transform: translateY(-2px); }
+        .profile-circle { width: 64px; height: 64px; border-radius: 50%; background: linear-gradient(135deg, #fde68a, #f59e0b); display: flex; align-items: center; justify-content: center; font-size: 28px; font-weight: 800; color: #fff; box-shadow: 0 8px 16px rgba(245, 158, 11, 0.2); border: 2px solid #fff; margin-bottom: 12px; }
         
         .um-sidebar-overlay { display: none; position: fixed; inset: 0; background: rgba(120,80,0,0.4); z-index: 30; backdrop-filter: blur(4px); animation: fadeIn 0.3s ease; }
         .mobile-menu-btn { display: none; background: rgba(255,255,255,0.85); border: 1.5px solid #fde68a; border-radius: 12px; width: 44px; height: 44px; cursor: pointer; color: #92400e; align-items: center; justify-content: center; backdrop-filter: blur(8px); box-shadow: 0 4px 12px rgba(180,130,0,0.1); position: absolute; top: 24px; left: 24px; z-index: 20; transition: transform 0.2s, background 0.2s; }
@@ -43,6 +51,14 @@ export default function Sidebar({ isOpen, close }) {
                         <p style={{ margin: 0, fontSize: 12, color: '#b45309', fontWeight: 600 }}>Energy Network</p>
                     </div>
                 </div>
+
+                {user && (
+                    <div className="sidebar-profile" onClick={() => { navigate('/profile'); close(); }}>
+                        <div className="profile-circle">{initial}</div>
+                        <span style={{ fontSize: 16, fontWeight: 800, color: '#451a03' }}>{user.name}</span>
+                        <span style={{ fontSize: 12, fontWeight: 600, color: '#d97706', marginTop: 4 }}>View Profile</span>
+                    </div>
+                )}
 
                 <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
                     {links.map(l => {

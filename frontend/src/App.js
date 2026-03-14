@@ -6,9 +6,11 @@ import Dashboard from "./pages/Dashboard";
 import Marketplace from "./pages/Marketplace";
 import MapView from "./pages/MapView";
 import Transactions from "./pages/Transactions";
-
+import Messages from "./pages/Messages";
 import Layout from "./components/Layout";
 import PageTransition from "./components/PageTransition";
+import ProtectedRoute from "./components/ProtectedRoute";
+import Profile from "./pages/Profile";
 
 import "leaflet/dist/leaflet.css";
 
@@ -29,15 +31,31 @@ function AnimatedRoutes() {
           }
         />
 
+        {/* PROFILE */}
+        <Route
+          path="/profile"
+          element={
+            <ProtectedRoute>
+              <Layout>
+                <PageTransition>
+                  <Profile />
+                </PageTransition>
+              </Layout>
+            </ProtectedRoute>
+          }
+        />
+
         {/* DASHBOARD */}
         <Route
           path="/dashboard"
           element={
-            <Layout>
-              <PageTransition>
-                <Dashboard />
-              </PageTransition>
-            </Layout>
+            <ProtectedRoute>
+              <Layout>
+                <PageTransition>
+                  <Dashboard />
+                </PageTransition>
+              </Layout>
+            </ProtectedRoute>
           }
         />
 
@@ -45,11 +63,13 @@ function AnimatedRoutes() {
         <Route
           path="/marketplace"
           element={
-            <Layout>
-              <PageTransition>
-                <Marketplace />
-              </PageTransition>
-            </Layout>
+            <ProtectedRoute>
+              <Layout>
+                <PageTransition>
+                  <Marketplace />
+                </PageTransition>
+              </Layout>
+            </ProtectedRoute>
           }
         />
 
@@ -57,11 +77,13 @@ function AnimatedRoutes() {
         <Route
           path="/map"
           element={
-            <Layout>
-              <PageTransition>
-                <MapView />
-              </PageTransition>
-            </Layout>
+            <ProtectedRoute>
+              <Layout>
+                <PageTransition>
+                  <MapView />
+                </PageTransition>
+              </Layout>
+            </ProtectedRoute>
           }
         />
 
@@ -69,11 +91,27 @@ function AnimatedRoutes() {
         <Route
           path="/transactions"
           element={
-            <Layout>
-              <PageTransition>
-                <Transactions />
-              </PageTransition>
-            </Layout>
+            <ProtectedRoute>
+              <Layout>
+                <PageTransition>
+                  <Transactions />
+                </PageTransition>
+              </Layout>
+            </ProtectedRoute>
+          }
+        />
+
+        {/* MESSAGES */}
+        <Route
+          path="/messages"
+          element={
+            <ProtectedRoute>
+              <Layout>
+                <PageTransition>
+                  <Messages />
+                </PageTransition>
+              </Layout>
+            </ProtectedRoute>
           }
         />
 

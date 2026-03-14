@@ -102,6 +102,33 @@ export const fetchTrafficLogs = async () => {
   }
 };
 
+export const getConversations = async () => {
+  try {
+    const res = await apiClient.get("/messages/conversations");
+    return res.data;
+  } catch (error) {
+    return handleError(error);
+  }
+};
+
+export const getChatHistory = async (userId) => {
+  try {
+    const res = await apiClient.get(`/messages/history/${userId}`);
+    return res.data;
+  } catch (error) {
+    return handleError(error);
+  }
+};
+
+export const markMessagesAsRead = async (senderId) => {
+  try {
+    const res = await apiClient.put(`/messages/read/${senderId}`);
+    return res.data;
+  } catch (error) {
+    return handleError(error);
+  }
+};
+
 export const sendUserMessage = async (senderId, receiverId, message) => {
   const res = await apiClient.post("/messages/send", {
     senderId,
@@ -109,11 +136,6 @@ export const sendUserMessage = async (senderId, receiverId, message) => {
     message
   });
 
-  return res.data;
-};
-
-export const getConversation = async (user1, user2) => {
-  const res = await apiClient.get(`/messages/conversation/${user1}/${user2}`);
   return res.data;
 };
 
@@ -188,6 +210,7 @@ export const getMyTransactions = async () => {
     const res = await apiClient.get("/transactions/my-transactions");
     return res.data;
   } catch (error) {
+    console.error("AXIOS ERROR getMyTransactions:", error);
     return handleError(error);
   }
 };
@@ -198,6 +221,51 @@ export const purchaseEnergy = async (listingId, units) => {
       listingId,
       units,
     });
+    return res.data;
+  } catch (error) {
+    return handleError(error);
+  }
+};
+
+export const requestTransaction = async (listingId, units) => {
+  try {
+    const res = await apiClient.post("/transactions/request", {
+      listingId,
+      units,
+    });
+    return res.data;
+  } catch (error) {
+    return handleError(error);
+  }
+};
+
+export const sellerTransactionDecision = async (transactionId, decision, reason = "") => {
+  try {
+    const res = await apiClient.post(`/transactions/${transactionId}/seller-decision`, {
+      decision,
+      reason,
+    });
+    return res.data;
+  } catch (error) {
+    return handleError(error);
+  }
+};
+
+export const completeTransaction = async (transactionId, deliveredUnits, proof = {}) => {
+  try {
+    const res = await apiClient.post(`/transactions/${transactionId}/complete`, {
+      deliveredUnits,
+      proof,
+    });
+    return res.data;
+  } catch (error) {
+    return handleError(error);
+  }
+};
+
+export const getMyTransactionsV2 = async (params = {}) => {
+  try {
+    const res = await apiClient.get("/transactions/my", { params });
     return res.data;
   } catch (error) {
     return handleError(error);
@@ -220,6 +288,15 @@ export const getProfile = async (userId) => {
 export const getMyProfile = async () => {
   try {
     const res = await apiClient.get("/users/me");
+    return res.data;
+  } catch (error) {
+    return handleError(error);
+  }
+};
+
+export const getCommunityStats = async () => {
+  try {
+    const res = await apiClient.get("/users/community-stats");
     return res.data;
   } catch (error) {
     return handleError(error);
@@ -287,12 +364,22 @@ export const api = {
 
   getMyTransactions,
   purchaseEnergy,
+  requestTransaction,
+  sellerTransactionDecision,
+  completeTransaction,
+  getMyTransactionsV2,
 
   getProfile,
   getMyProfile,
+  getCommunityStats,
   updateProfile,
   addBalance,
 
   leaveReview,
-  getUserReviews
+  getUserReviews,
+
+  getConversations,
+  getChatHistory,
+  markMessagesAsRead,
+  sendUserMessage
 };

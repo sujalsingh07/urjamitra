@@ -5,7 +5,19 @@ const userSchema = new mongoose.Schema({
   name: { type: String, required: true },
   email: { type: String, required: true, unique: true, lowercase: true },
   password: { type: String, required: true },
+  mobile: {
+    type: String,
+    default: '',
+    validate: {
+      validator: (value) => value === '' || /^\d{10}$/.test(value),
+      message: 'Mobile number must be exactly 10 digits'
+    }
+  },
   address: { type: String, required: true },
+  location: {
+    latitude: { type: Number, default: null },
+    longitude: { type: Number, default: null }
+  },
   wallet: { type: Number, default: 0 }, // Balance in rupees
   totalEnergyGenerated: { type: Number, default: 0 }, // in kWh
   totalEnergyShared: { type: Number, default: 0 }, // in kWh

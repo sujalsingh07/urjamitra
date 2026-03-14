@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
-import CampusMap from "../components/CampusMap";
+import { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { api } from '../services/api';
 
 const CSS = `
   @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800;900&family=Playfair+Display:wght@700;900&display=swap');
@@ -102,16 +102,14 @@ function CountUp({ end, prefix = '', suffix = '', decimals = 0, duration = 1200 
   return <span>{prefix}{displayVal}{suffix}</span>;
 }
 
-const recentActivity = [
-  { type: 'sold', desc: 'House #14B', sub: '2 kWh sold', time: 'Today, 9:12 AM', amount: '+₹36' },
-  { type: 'bought', desc: 'Sunita R.', sub: '1 kWh bought', time: 'Yesterday, 6:45 PM', amount: '-₹18' },
-  { type: 'sold', desc: 'Flat 4B', sub: '3 kWh sold', time: 'Yesterday, 2:30 PM', amount: '+₹54' },
-  { type: 'bought', desc: 'Anil Kumar', sub: '2 kWh bought', time: '2 days ago', amount: '-₹32' },
-];
-
-const weekly = [
-  { d: 'M', g: 10, s: 6 }, { d: 'T', g: 14, s: 9 }, { d: 'W', g: 8, s: 4 },
-  { d: 'T', g: 16, s: 11 }, { d: 'F', g: 12, s: 8 }, { d: 'S', g: 18, s: 13 }, { d: 'S', g: 15, s: 10 },
+const fallbackWeekly = [
+  { d: 'S', g: 0, s: 0 },
+  { d: 'M', g: 0, s: 0 },
+  { d: 'T', g: 0, s: 0 },
+  { d: 'W', g: 0, s: 0 },
+  { d: 'T', g: 0, s: 0 },
+  { d: 'F', g: 0, s: 0 },
+  { d: 'S', g: 0, s: 0 },
 ];
 
 function SunIcon({ size = 72 }) {
@@ -170,11 +168,11 @@ function SunIcon({ size = 72 }) {
   );
 }
 
-function MiniChart() {
-  const max = 18;
+function MiniChart({ data }) {
+  const max = Math.max(1, ...data.map((d) => Math.max(d.g, d.s)));
   return (
     <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6, height: 68 }}>
-      {weekly.map((d, i) => (
+      {data.map((d, i) => (
         <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
           <div style={{ width: '100%', height: 56, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', position: 'relative' }}>
             <div style={{ width: '100%', borderRadius: '4px 4px 0 0', height: `${(d.g / max) * 52}px`, background: 'rgba(245,158,11,0.2)', border: '1px solid rgba(245,158,11,0.15)', animation: `growUp 0.8s cubic-bezier(0.1,0.7,0.1,1) ${i * 0.05}s backwards` }} />
@@ -193,21 +191,186 @@ export default function Dashboard() {
   const [listing, setListing] = useState({ units: '', price: '' });
   const [done, setDone] = useState(false);
   const [mounted, setMounted] = useState(false);
-  const [kwh, setKwh] = useState(12.4);
-  const user = JSON.parse(localStorage.getItem('user')) || { name: 'Arjun' };
+  const [kwh, setKwh] = useState(0);
+  const [userProfile, setUserProfile] = useState(null);
+  const [communityStats, setCommunityStats] = useState({
+    monthlyGoal: 20000,
+    monthlySavings: 0,
+    totalSharedKwh: 0,
+    activeHomes: 0,
+    totalCo2Saved: 0,
+    communityRank: null,
+    communitySize: 0,
+    weekly: fallbackWeekly,
+  });
+  const [localUser] = useState(() => JSON.parse(localStorage.getItem('user')) || { name: 'Arjun' });
+  const [recentActivity, setRecentActivity] = useState([]);
+
+  const currentUserId = localUser?.id || localUser?._id || null;
+
+  const formatActivityTime = (isoDate) => {
+    if (!isoDate) return 'Just now';
+    const dt = new Date(isoDate);
+    const now = new Date();
+    const diffMs = now - dt;
+    const diffMin = Math.floor(diffMs / 60000);
+    const diffHr = Math.floor(diffMin / 60);
+    const diffDay = Math.floor(diffHr / 24);
+
+    if (diffMin < 1) return 'Just now';
+    if (diffMin < 60) return `${diffMin} min ago`;
+    if (diffHr < 24) return `${diffHr}h ago`;
+    if (diffDay === 1) return 'Yesterday';
+    return dt.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+  };
+
+  const statusLabel = (status) => {
+    const map = {
+      completed: 'Completed',
+      reserved: 'Awaiting seller',
+      seller_accepted: 'Accepted',
+      seller_rejected: 'Rejected',
+      in_delivery: 'In delivery',
+      cancelled: 'Cancelled',
+      expired: 'Expired',
+      refunded: 'Refunded',
+      pending: 'Pending',
+      pending_request: 'Pending'
+    };
+    return map[status] || String(status || 'Pending');
+  };
+
+  const isSettledStatus = (status) => status === 'completed';
+  const isNeutralStatus = (status) => ['seller_rejected', 'refunded', 'cancelled', 'expired'].includes(status);
+
+  const loadRecentActivity = useCallback(async () => {
+    try {
+      const txRes = await api.getMyTransactionsV2({ page: 1, limit: 8 });
+      if (!txRes.success || !Array.isArray(txRes.items)) return;
+
+      const mapped = txRes.items
+        .slice()
+        .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+        .slice(0, 4)
+        .map((t) => {
+          const isSold = String(t.seller?._id || t.seller) === String(currentUserId);
+          const counterpart = isSold
+            ? (t.buyer?.name || 'Unknown buyer')
+            : (t.seller?.name || 'Unknown seller');
+          const txStatus = t.status;
+          const baseAmount = Number(t.totalAmount || t.grossAmount || 0);
+          const amountText = isSettledStatus(txStatus)
+            ? `${isSold ? '+' : '-'}₹${baseAmount.toFixed(2)}`
+            : isNeutralStatus(txStatus)
+              ? '₹0.00'
+              : `₹${baseAmount.toFixed(2)}`;
+
+          return {
+            type: isSold ? 'sold' : 'bought',
+            status: txStatus,
+            desc: counterpart,
+            sub: `${Number(t.units || t.deliveredUnits || t.reservedUnits || 0)} kWh · ${statusLabel(t.status)}`,
+            time: formatActivityTime(t.createdAt),
+            amount: amountText
+          };
+        });
+
+      setRecentActivity(mapped);
+    } catch {
+      // Keep current activity list if refresh fails.
+    }
+  }, [currentUserId]);
 
   const greeting = () => {
     const h = new Date().getHours();
     return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
   };
 
-  useEffect(() => {
-    setTimeout(() => setMounted(true), 60);
-    const t = setInterval(() => setKwh(v => +((v + (Math.random() * 0.08 - 0.04)).toFixed(1))), 2500);
-    return () => clearInterval(t);
-  }, []);
+  const loadProfileAndCommunity = useCallback(async () => {
+    const [profileResult, communityResult] = await Promise.allSettled([
+      api.getMyProfile(),
+      api.getCommunityStats(),
+    ]);
 
-  const pct = Math.round((kwh / 16) * 100);
+    if (profileResult.status === 'fulfilled') {
+      const res = profileResult.value;
+      if (res.success && res.user) {
+        setUserProfile(res.user);
+        const generatedKwh = Number(res.user.totalEnergyGenerated || 0);
+        const sharedKwh = Number(res.user.totalEnergyShared || 0);
+        setKwh(generatedKwh > 0 ? generatedKwh : sharedKwh);
+
+        const merged = { ...localUser, ...res.user };
+        localStorage.setItem('user', JSON.stringify(merged));
+      }
+    } else {
+      setKwh(0);
+    }
+
+    if (communityResult.status === 'fulfilled') {
+      const statsRes = communityResult.value;
+      if (statsRes.success && statsRes.stats) {
+        const parsedRank = Number(statsRes.stats.communityRank);
+        const parsedSize = Number(statsRes.stats.communitySize);
+        setCommunityStats({
+          monthlyGoal: Number(statsRes.stats.monthlyGoal || 20000),
+          monthlySavings: Number(statsRes.stats.monthlySavings || 0),
+          totalSharedKwh: Number(statsRes.stats.totalSharedKwh || 0),
+          activeHomes: Number(statsRes.stats.activeHomes || 0),
+          totalCo2Saved: Number(statsRes.stats.totalCo2Saved || 0),
+          communityRank: Number.isFinite(parsedRank) && parsedRank > 0
+            ? parsedRank
+            : null,
+          communitySize: Number.isFinite(parsedSize) && parsedSize > 0
+            ? parsedSize
+            : 0,
+          weekly: Array.isArray(statsRes.stats.weekly) && statsRes.stats.weekly.length
+            ? statsRes.stats.weekly
+            : fallbackWeekly,
+        });
+      }
+    }
+  }, [localUser]);
+
+  useEffect(() => {
+    const loadDashboardData = async () => {
+      setTimeout(() => setMounted(true), 60);
+      await loadProfileAndCommunity();
+      loadRecentActivity();
+    };
+
+    loadDashboardData();
+  }, [loadRecentActivity, loadProfileAndCommunity]);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      loadProfileAndCommunity();
+      loadRecentActivity();
+    }, 20000);
+
+    return () => clearInterval(id);
+  }, [loadRecentActivity, loadProfileAndCommunity]);
+
+  const userName = userProfile?.name || localUser.name || 'Arjun';
+  const energyShared = Number(userProfile?.totalEnergyShared || 0);
+  const liveGenerationKwh = kwh > 0 ? kwh : energyShared;
+  const pct = Math.max(0, Math.min(100, Math.round((liveGenerationKwh / 16) * 100)));
+  const totalEarnings = Number(userProfile?.totalEarnings || 0);
+  const co2SavedRaw = Number(userProfile?.co2Saved || 0);
+  const co2Saved = co2SavedRaw > 0 ? co2SavedRaw : Number((energyShared * 0.82).toFixed(1));
+  const safeCommunitySize = Number.isFinite(Number(communityStats.communitySize)) && Number(communityStats.communitySize) > 0
+    ? Number(communityStats.communitySize)
+    : 0;
+  const safeCommunityRank = Number.isFinite(Number(communityStats.communityRank)) && Number(communityStats.communityRank) > 0
+    ? Number(communityStats.communityRank)
+    : (safeCommunitySize > 0 ? 1 : 0);
+  const communityRankText = safeCommunitySize > 0
+    ? `#${safeCommunityRank}/${safeCommunitySize}`
+    : '--';
+  const communityGoalPct = Math.max(
+    0,
+    Math.min(100, Math.round((communityStats.monthlySavings / Math.max(1, communityStats.monthlyGoal)) * 100))
+  );
 
   const postListing = () => {
     if (!listing.units || !listing.price) return;
@@ -242,7 +405,7 @@ export default function Dashboard() {
                 {new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
               </p>
               <h1 style={{ margin: '0 0 10px', fontSize: 34, fontWeight: 900, color: '#451a03', fontFamily: "'Playfair Display',serif", letterSpacing: -1, lineHeight: 1.1 }}>
-                {greeting()}, <span style={{ color: '#b45309' }}>{user.name}!</span>
+                {greeting()}, <span style={{ color: '#b45309' }}>{userName}!</span>
               </h1>
               <div style={{ display: 'flex', alignItems: 'center', gap: 7, justifyContent: window.innerWidth <= 600 ? 'center' : 'flex-start' }}>
                 <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#22c55e', animation: 'blink 2.5s infinite', boxShadow: '0 0 8px #22c55e' }} />
@@ -266,15 +429,15 @@ export default function Dashboard() {
               <div>
                 <p style={{ margin: 0, fontSize: 11, color: '#92740a', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1.5 }}>Live Generation</p>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 5, marginTop: 3 }}>
-                  <span style={{ fontSize: 42, fontWeight: 900, color: '#b45309', lineHeight: 1, letterSpacing: -1.5 }}>{kwh}</span>
+                  <span style={{ fontSize: 42, fontWeight: 900, color: '#b45309', lineHeight: 1, letterSpacing: -1.5 }}>{liveGenerationKwh}</span>
                   <span style={{ fontSize: 17, color: '#d97706', fontWeight: 600 }}>kWh</span>
                 </div>
               </div>
               <div style={{ textAlign: 'right' }}>
                 <div style={{ background: '#f0fdf4', border: '1.5px solid #86efac', borderRadius: 10, padding: '7px 16px', marginBottom: 5 }}>
-                  <span style={{ color: '#15803d', fontWeight: 800, fontSize: 14 }}>+₹164 today</span>
+                  <span style={{ color: '#15803d', fontWeight: 800, fontSize: 14 }}>₹{totalEarnings.toFixed(0)} total earned</span>
                 </div>
-                <p style={{ margin: 0, fontSize: 11, color: '#92740a', fontWeight: 500 }}>↑ 12% vs yesterday</p>
+                <p style={{ margin: 0, fontSize: 11, color: '#92740a', fontWeight: 500 }}>Live from your profile data</p>
               </div>
             </div>
             {/* Progress bar */}
@@ -291,10 +454,10 @@ export default function Dashboard() {
           {/* Stats row — overlap header slightly */}
           <div className="stats-grid" style={{ marginTop: -28, marginBottom: 20, position: 'relative', zIndex: 2 }}>
             {[
-              { icon: '⚡', val: <CountUp end={8.2} decimals={1} suffix=" kWh" />, label: 'Energy Shared', accent: '#c2410c', bg: 'linear-gradient(135deg, #fff7ed, #ffedd5)', border: '#fdba74' },
-              { icon: '💰', val: <CountUp end={164} prefix="₹" />, label: 'Money Earned', accent: '#15803d', bg: 'linear-gradient(135deg, #f0fdf4, #dcfce7)', border: '#86efac' },
-              { icon: '🌿', val: <CountUp end={6.5} decimals={1} suffix=" kg" />, label: 'CO₂ Saved', accent: '#0369a1', bg: 'linear-gradient(135deg, #f0f9ff, #e0f2fe)', border: '#7dd3fc' },
-              { icon: '🏆', val: '#4/48', label: 'Community Rank', accent: '#6d28d9', bg: 'linear-gradient(135deg, #faf5ff, #f3e8ff)', border: '#d8b4fe' },
+              { icon: '⚡', val: <CountUp end={energyShared} decimals={1} suffix=" kWh" />, label: 'Energy Shared', accent: '#c2410c', bg: 'linear-gradient(135deg, #fff7ed, #ffedd5)', border: '#fdba74' },
+              { icon: '💰', val: <CountUp end={totalEarnings} prefix="₹" />, label: 'Money Earned', accent: '#15803d', bg: 'linear-gradient(135deg, #f0fdf4, #dcfce7)', border: '#86efac' },
+              { icon: '🌿', val: <CountUp end={co2Saved} decimals={1} suffix=" kg" />, label: 'CO₂ Saved', accent: '#0369a1', bg: 'linear-gradient(135deg, #f0f9ff, #e0f2fe)', border: '#7dd3fc' },
+              { icon: '🏆', val: communityRankText, label: 'Community Rank', accent: '#6d28d9', bg: 'linear-gradient(135deg, #faf5ff, #f3e8ff)', border: '#d8b4fe' },
             ].map(s => (
               <div key={s.label} className="um-card" style={{ background: s.bg, border: `1px solid ${s.border}`, borderRadius: 24, padding: '24px', boxShadow: '0 8px 24px rgba(0,0,0,0.04)', animation: 'fadeUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) both' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
@@ -317,15 +480,15 @@ export default function Dashboard() {
                   <h3 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: '#14532d', letterSpacing: '-0.5px' }}>Monthly Savings</h3>
                 </div>
                 <div style={{ textAlign: 'right' }}>
-                  <div style={{ fontSize: 22, fontWeight: 900, color: '#15803d', letterSpacing: -1 }}>₹14,820</div>
-                  <div style={{ fontSize: 10, color: '#16a34a' }}>of ₹20,000 goal</div>
+                  <div style={{ fontSize: 22, fontWeight: 900, color: '#15803d', letterSpacing: -1 }}>₹{communityStats.monthlySavings.toFixed(0)}</div>
+                  <div style={{ fontSize: 10, color: '#16a34a' }}>of ₹{communityStats.monthlyGoal.toFixed(0)} goal</div>
                 </div>
               </div>
               <div style={{ background: 'rgba(134,239,172,0.4)', borderRadius: 99, height: 8, overflow: 'hidden', marginBottom: 14 }}>
-                <div style={{ width: '74%', height: '100%', borderRadius: 99, background: 'linear-gradient(90deg,#22c55e,#16a34a)', boxShadow: '0 0 8px rgba(34,197,94,0.3)' }} />
+                <div style={{ width: `${communityGoalPct}%`, height: '100%', borderRadius: 99, background: 'linear-gradient(90deg,#22c55e,#16a34a)', boxShadow: '0 0 8px rgba(34,197,94,0.3)', transition: 'width 0.8s ease' }} />
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
-                {[['284 kWh', 'Shared'], ['48', 'Homes'], ['186 kg', 'CO₂']].map(([v, l]) => (
+                {[[`${communityStats.totalSharedKwh.toFixed(1)} kWh`, 'Shared'], [`${communityStats.activeHomes}`, 'Homes'], [`${communityStats.totalCo2Saved.toFixed(1)} kg`, 'CO₂']].map(([v, l]) => (
                   <div key={l} style={{ background: 'rgba(255,255,255,0.6)', borderRadius: 10, padding: '10px 6px', textAlign: 'center', border: '1px solid rgba(134,239,172,0.5)' }}>
                     <div style={{ color: '#14532d', fontWeight: 800, fontSize: 12 }}>{v}</div>
                     <div style={{ color: '#16a34a', fontSize: 10, marginTop: 1 }}>{l}</div>
@@ -347,19 +510,13 @@ export default function Dashboard() {
                   ))}
                 </div>
               </div>
-              <MiniChart />
+              <MiniChart data={communityStats.weekly} />
             </div>
-          </div>
-
-          {/* Map */}
-          <div className="um-card" style={{ marginBottom: 16, padding: 24 }}>
-            <h2 style={{ margin: '0 0 16px', fontSize: 16, fontWeight: 800, color: '#451a03', letterSpacing: '-0.5px' }}>📍 Community Energy Map</h2>
-            <CampusMap />
           </div>
 
           {/* Action buttons */}
           <div className="two-col-grid" style={{ gap: 16, marginBottom: 24 }}>
-            <button onClick={() => setShowModal(true)} className="gradient-btn">
+            <button onClick={() => navigate('/marketplace', { state: { openListModal: true } })} className="gradient-btn">
               <span style={{ fontSize: 22 }}>⚡</span> List My Surplus Energy
             </button>
             <button onClick={() => navigate('/marketplace')} className="ghost-btn">
@@ -374,7 +531,7 @@ export default function Dashboard() {
               <p style={{ margin: '0 0 4px', fontWeight: 900, fontSize: 15, color: '#9a3412', letterSpacing: -0.2 }}>Peak Hours: 11AM – 3PM</p>
               <p style={{ margin: 0, fontSize: 13, color: '#b45309', fontWeight: 500 }}>Best time to sell — earn up to <strong style={{ color: '#ea580c' }}>15% more</strong> per kWh</p>
             </div>
-            <button onClick={() => setShowModal(true)} style={{ background: '#ea580c', color: '#fff', border: 'none', borderRadius: 12, padding: '12px 20px', fontWeight: 800, fontSize: 14, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap', boxShadow: '0 4px 12px rgba(234, 88, 12, 0.3)', transition: 'transform 0.2s', ':hover': { transform: 'scale(1.05)' } }}>
+            <button onClick={() => navigate('/marketplace', { state: { openListModal: true } })} style={{ background: '#ea580c', color: '#fff', border: 'none', borderRadius: 12, padding: '12px 20px', fontWeight: 800, fontSize: 14, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap', boxShadow: '0 4px 12px rgba(234, 88, 12, 0.3)', transition: 'transform 0.2s', ':hover': { transform: 'scale(1.05)' } }}>
               List Now →
             </button>
           </div>
@@ -388,15 +545,15 @@ export default function Dashboard() {
             {recentActivity.length > 0 ? recentActivity.map((a, i) => (
               <div key={i} className="um-row" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 24px', borderBottom: i < recentActivity.length - 1 ? '1px solid #f8fafc' : 'none' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-                  <div style={{ width: 44, height: 44, borderRadius: 14, background: a.type === 'sold' ? 'linear-gradient(135deg, #dcfce7, #bbf7d0)' : 'linear-gradient(135deg, #dbeafe, #bfdbfe)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, color: a.type === 'sold' ? '#16a34a' : '#2563eb', fontSize: 18, boxShadow: '0 4px 12px rgba(0,0,0,0.05)' }}>
-                    {a.type === 'sold' ? '↑' : '↓'}
+                  <div style={{ width: 44, height: 44, borderRadius: 14, background: isNeutralStatus(a.status) ? 'linear-gradient(135deg, #fee2e2, #fecaca)' : a.type === 'sold' ? 'linear-gradient(135deg, #dcfce7, #bbf7d0)' : 'linear-gradient(135deg, #dbeafe, #bfdbfe)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, color: isNeutralStatus(a.status) ? '#b91c1c' : a.type === 'sold' ? '#16a34a' : '#2563eb', fontSize: 18, boxShadow: '0 4px 12px rgba(0,0,0,0.05)' }}>
+                    {isNeutralStatus(a.status) ? '✕' : a.type === 'sold' ? '↑' : '↓'}
                   </div>
                   <div>
                     <p style={{ margin: 0, fontSize: 15, fontWeight: 800, color: '#1e293b' }}>{a.desc}</p>
                     <p style={{ margin: '4px 0 0', fontSize: 12, color: '#64748b', fontWeight: 500 }}>{a.sub} <span style={{ color: '#cbd5e1', margin: '0 4px' }}>|</span> {a.time}</p>
                   </div>
                 </div>
-                <span style={{ fontSize: 16, fontWeight: 900, color: a.type === 'sold' ? '#16a34a' : '#2563eb', background: a.type === 'sold' ? '#f0fdf4' : '#f0f9ff', padding: '6px 12px', borderRadius: 8 }}>{a.amount}</span>
+                <span style={{ fontSize: 16, fontWeight: 900, color: isNeutralStatus(a.status) ? '#b91c1c' : a.type === 'sold' ? '#16a34a' : '#2563eb', background: isNeutralStatus(a.status) ? '#fef2f2' : a.type === 'sold' ? '#f0fdf4' : '#f0f9ff', padding: '6px 12px', borderRadius: 8 }}>{a.amount}</span>
               </div>
             )) : (
               <div style={{ padding: '32px 24px', textAlign: 'center' }}>
