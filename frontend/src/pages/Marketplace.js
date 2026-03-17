@@ -213,6 +213,12 @@ export default function Marketplace() {
 
   const getSellerId = (listing) => listing?.seller?._id || listing?.seller?.id || listing?.seller;
 
+  const getListingLocationLabel = (listing) => {
+    const raw = String(listing?.location?.address || listing?.seller?.address || '').trim();
+    if (!raw || raw.toLowerCase() === 'campus') return 'Location TBD';
+    return raw;
+  };
+
   const mapTxErrorMessage = (res) => {
     const code = res?.code;
     if (code === 'LISTING_UNAVAILABLE') return 'This listing is no longer available or has fewer units now.';
@@ -531,7 +537,7 @@ export default function Marketplace() {
                         <h3 style={{ margin: 0, fontSize: 17, fontWeight: 900, color: '#451a03', letterSpacing: -0.3 }}>{listing.seller?.name || 'Unknown'}</h3>
                         <span style={{ fontSize: 12, background: '#fef3c7', color: '#d97706', padding: '2px 8px', borderRadius: 8, fontWeight: 800 }}>★ {(listing.seller?.rating || 5).toFixed(1)}</span>
                       </div>
-                      <p style={{ margin: '0 0 4px', fontSize: 13, color: '#92400e', fontWeight: 500 }}>📍 {listing.location?.address || 'Location TBD'}</p>
+                      <p style={{ margin: '0 0 4px', fontSize: 13, color: '#92400e', fontWeight: 500 }}>📍 {getListingLocationLabel(listing)}</p>
                       <p style={{ margin: 0, fontSize: 11, color: '#b45309', opacity: 0.7, fontWeight: 600 }}>Listed {new Date(listing.createdAt).toLocaleDateString()}</p>
                     </div>
                   </div>

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { MapContainer, TileLayer, Marker, Popup, Circle } from "react-leaflet";
+import { MapContainer, TileLayer, Marker, Popup, Circle, useMap } from "react-leaflet";
 import L from "leaflet";
 import { api } from "../services/api";
 import "leaflet/dist/leaflet.css";
@@ -49,6 +49,52 @@ const isLikelyIndiaCoordinate = (lat, lng) =>
   isFiniteCoordinate(lng) &&
   lat >= 6 && lat <= 38 &&
   lng >= 68 && lng <= 98;
+
+const spreadOverlappingMarkers = (markers) => {
+  const byCoordinate = markers.reduce((acc, marker) => {
+    const key = `${marker.position[0].toFixed(6)}-${marker.position[1].toFixed(6)}`;
+    if (!acc.has(key)) acc.set(key, []);
+    acc.get(key).push(marker);
+    return acc;
+  }, new Map());
+
+  const radiusMeters = 130;
+
+  return Array.from(byCoordinate.values()).flatMap((group) => {
+    if (group.length <= 1) return group;
+
+    return group.map((marker, index) => {
+      const [lat, lng] = marker.position;
+      const angle = (2 * Math.PI * index) / group.length;
+      const latOffset = (radiusMeters / 111320) * Math.sin(angle);
+      const lngOffset = (radiusMeters / (111320 * Math.cos((lat * Math.PI) / 180))) * Math.cos(angle);
+
+      return {
+        ...marker,
+        originalPosition: marker.position,
+        position: [lat + latOffset, lng + lngOffset],
+      };
+    });
+  });
+};
+
+function AutoFitBounds({ yourLocation, sellerMarkers }) {
+  const map = useMap();
+
+  useEffect(() => {
+    const points = [yourLocation, ...sellerMarkers.map((s) => s.position)]
+      .filter((p) => Array.isArray(p) && isLikelyIndiaCoordinate(p[0], p[1]));
+
+    if (points.length <= 1) return;
+
+    map.fitBounds(points, {
+      padding: [36, 36],
+      maxZoom: 14,
+    });
+  }, [map, yourLocation, sellerMarkers]);
+
+  return null;
+}
 
 function MapView() {
   const [showSuccess, setShowSuccess] = useState(false);
@@ -171,7 +217,7 @@ function MapView() {
         }, new Map()).values()
       );
 
-      setSellerMarkers(aggregatedMarkers);
+      setSellerMarkers(spreadOverlappingMarkers(aggregatedMarkers));
     } catch {
       setSellerMarkers([]);
       setSellerError("Unable to load nearby sellers.");
@@ -243,11 +289,13 @@ function MapView() {
 
           <div className="um-card" style={{ borderRadius: 24, overflow: 'hidden', padding: 8, boxShadow: '0 16px 40px rgba(180,130,0,0.12)', marginBottom: 24 }}>
             <div style={{ borderRadius: 16, overflow: 'hidden', border: '1px solid rgba(253,230,138,0.5)' }}>
-              <MapContainer key={yourLocation.join('-')} center={yourLocation} zoom={15} style={{ height: "500px", width: "100%", zIndex: 1 }}>
+              <MapContainer key={yourLocation.join('-')} center={yourLocation} zoom={13} style={{ height: "500px", width: "100%", zIndex: 1 }}>
                 <TileLayer
                   attribution="&copy; OpenStreetMap contributors"
                   url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
                 />
+
+                <AutoFitBounds yourLocation={yourLocation} sellerMarkers={sellerMarkers} />
 
                 <Marker position={yourLocation} icon={youIcon}>
                   <Popup>
