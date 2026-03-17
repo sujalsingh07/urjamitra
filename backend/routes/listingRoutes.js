@@ -97,7 +97,7 @@ router.get('/all', authenticateToken, async (req, res) => {
         { expiresAt: { $exists: false } }
       ]
     })
-      .populate('seller', 'name email address rating reviewCount')
+      .populate('seller', 'name email address location rating reviewCount')
       .sort({ createdAt: -1 });
 
     const localListings = listings.filter((listing) =>

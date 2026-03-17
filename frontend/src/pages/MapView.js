@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { MapContainer, TileLayer, Marker, Popup, Circle } from "react-leaflet";
 import L from "leaflet";
 import { api } from "../services/api";
@@ -43,6 +43,12 @@ const youIcon = new L.Icon({
 });
 
 const isFiniteCoordinate = (value) => typeof value === "number" && Number.isFinite(value);
+const INDIA_DEFAULT_CENTER = [22.7196, 75.8577]; // Indore, MP
+const isLikelyIndiaCoordinate = (lat, lng) =>
+  isFiniteCoordinate(lat) &&
+  isFiniteCoordinate(lng) &&
+  lat >= 6 && lat <= 38 &&
+  lng >= 68 && lng <= 98;
 
 function MapView() {
   const [showSuccess, setShowSuccess] = useState(false);
@@ -51,110 +57,145 @@ function MapView() {
   const [sellerMarkers, setSellerMarkers] = useState([]);
   const [sellerError, setSellerError] = useState("");
 
-  useEffect(() => {
-    setTimeout(() => setMounted(true), 60);
-
-    const userStr = localStorage.getItem('user');
-    if (!userStr) {
-      return;
+  const loadUserProfile = useCallback(async () => {
+    try {
+      const res = await api.getMyProfile();
+      if (res?.success && res.user) {
+        setUserProfile(res.user);
+        try {
+          const existing = JSON.parse(localStorage.getItem("user") || "{}");
+          localStorage.setItem("user", JSON.stringify({ ...existing, ...res.user }));
+        } catch {
+          // no-op
+        }
+        return;
+      }
+    } catch {
+      // Fallback below
     }
 
+    const userStr = localStorage.getItem("user");
+    if (!userStr) return;
     try {
       setUserProfile(JSON.parse(userStr));
-    } catch (error) {
+    } catch {
       setUserProfile(null);
     }
   }, []);
 
-  useEffect(() => {
-    const loadSellerMarkers = async () => {
-      try {
-        setSellerError("");
-        const res = await api.getListings();
+  const loadSellerMarkers = useCallback(async () => {
+    try {
+      setSellerError("");
+      const res = await api.getListings();
 
-        if (!res.success || !Array.isArray(res.listings)) {
-          setSellerMarkers([]);
-          setSellerError(res.message || "Unable to load nearby sellers.");
-          return;
-        }
+      if (!res.success || !Array.isArray(res.listings)) {
+        setSellerMarkers([]);
+        setSellerError(res.message || "Unable to load nearby sellers.");
+        return;
+      }
 
-        const markers = await Promise.all(
-          res.listings.map(async (listing) => {
-            const latitude = listing.location?.latitude;
-            const longitude = listing.location?.longitude;
+      const markers = await Promise.all(
+        res.listings.map(async (listing) => {
+          const latitude = listing.location?.latitude ?? listing.seller?.location?.latitude;
+          const longitude = listing.location?.longitude ?? listing.seller?.location?.longitude;
+          const resolvedAddress = listing.location?.address || listing.seller?.address || "Location unavailable";
 
-            if (isFiniteCoordinate(latitude) && isFiniteCoordinate(longitude)) {
-              return {
-                id: listing._id,
-                sellerId: listing.seller?._id || listing.seller?.id || listing._id,
-                name: listing.seller?.name || "Unknown seller",
-                address: listing.location?.address || "Location unavailable",
-                units: listing.units,
-                price: listing.pricePerUnit,
-                position: [latitude, longitude],
-              };
-            }
+          if (isLikelyIndiaCoordinate(latitude, longitude)) {
+            return {
+              id: listing._id,
+              sellerId: listing.seller?._id || listing.seller?.id || listing._id,
+              name: listing.seller?.name || "Unknown seller",
+              address: resolvedAddress,
+              units: listing.units,
+              price: listing.pricePerUnit,
+              position: [latitude, longitude],
+            };
+          }
 
-            if (!listing.location?.address) {
+          if (!resolvedAddress || resolvedAddress === "Location unavailable") {
+            return null;
+          }
+
+          try {
+            const response = await fetch(
+              `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=in&bounded=1&viewbox=68,38,98,6&q=${encodeURIComponent(resolvedAddress)}`
+            );
+            const data = await response.json();
+            const match = data?.[0];
+
+            if (!match) {
               return null;
             }
 
-            try {
-              const response = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=${encodeURIComponent(listing.location.address)}`);
-              const data = await response.json();
-              const match = data?.[0];
-
-              if (!match) {
-                return null;
-              }
-
-              return {
-                id: listing._id,
-                sellerId: listing.seller?._id || listing.seller?.id || listing._id,
-                name: listing.seller?.name || "Unknown seller",
-                address: listing.location.address,
-                units: listing.units,
-                price: listing.pricePerUnit,
-                position: [Number(match.lat), Number(match.lon)],
-              };
-            } catch (error) {
+            const lat = Number(match.lat);
+            const lon = Number(match.lon);
+            if (!isLikelyIndiaCoordinate(lat, lon)) {
               return null;
             }
-          })
-        );
 
-        const aggregatedMarkers = Array.from(
-          markers.filter(Boolean).reduce((acc, marker) => {
-            const markerKey = `${marker.sellerId}-${marker.position[0].toFixed(5)}-${marker.position[1].toFixed(5)}`;
+            return {
+              id: listing._id,
+              sellerId: listing.seller?._id || listing.seller?.id || listing._id,
+              name: listing.seller?.name || "Unknown seller",
+              address: resolvedAddress,
+              units: listing.units,
+              price: listing.pricePerUnit,
+              position: [lat, lon],
+            };
+          } catch {
+            return null;
+          }
+        })
+      );
 
-            if (!acc.has(markerKey)) {
-              acc.set(markerKey, {
-                ...marker,
-                listingCount: 1,
-              });
-              return acc;
-            }
+      const aggregatedMarkers = Array.from(
+        markers.filter(Boolean).reduce((acc, marker) => {
+          const markerKey = `${marker.sellerId}-${marker.position[0].toFixed(5)}-${marker.position[1].toFixed(5)}`;
 
-            const existing = acc.get(markerKey);
+          if (!acc.has(markerKey)) {
             acc.set(markerKey, {
-              ...existing,
-              units: Number(existing.units || 0) + Number(marker.units || 0),
-              price: Math.min(Number(existing.price || 0), Number(marker.price || 0)) || Number(marker.price || 0),
-              listingCount: existing.listingCount + 1,
+              ...marker,
+              listingCount: 1,
             });
             return acc;
-          }, new Map()).values()
-        );
+          }
 
-        setSellerMarkers(aggregatedMarkers);
-      } catch (error) {
-        setSellerMarkers([]);
-        setSellerError("Unable to load nearby sellers.");
-      }
+          const existing = acc.get(markerKey);
+          acc.set(markerKey, {
+            ...existing,
+            units: Number(existing.units || 0) + Number(marker.units || 0),
+            price: Math.min(Number(existing.price || 0), Number(marker.price || 0)) || Number(marker.price || 0),
+            listingCount: existing.listingCount + 1,
+          });
+          return acc;
+        }, new Map()).values()
+      );
+
+      setSellerMarkers(aggregatedMarkers);
+    } catch {
+      setSellerMarkers([]);
+      setSellerError("Unable to load nearby sellers.");
+    }
+  }, []);
+
+  useEffect(() => {
+    setTimeout(() => setMounted(true), 60);
+    loadUserProfile();
+    loadSellerMarkers();
+
+    const socket = window.__socket;
+    const onListingChanged = () => {
+      loadSellerMarkers();
     };
 
-    loadSellerMarkers();
-  }, []);
+    if (socket) {
+      socket.on('listing:changed', onListingChanged);
+    }
+
+    return () => {
+      if (socket) socket.off('listing:changed', onListingChanged);
+    };
+  }, [loadSellerMarkers, loadUserProfile]);
 
   const handleConnect = () => {
     setShowSuccess(true);
@@ -163,8 +204,8 @@ function MapView() {
 
   const savedLatitude = userProfile?.location?.latitude;
   const savedLongitude = userProfile?.location?.longitude;
-  const hasSavedLocation = Number.isFinite(savedLatitude) && Number.isFinite(savedLongitude);
-  const yourLocation = hasSavedLocation ? [savedLatitude, savedLongitude] : [18.5204, 73.8567];
+  const hasSavedLocation = isLikelyIndiaCoordinate(savedLatitude, savedLongitude);
+  const yourLocation = hasSavedLocation ? [savedLatitude, savedLongitude] : INDIA_DEFAULT_CENTER;
   const yourAddress = userProfile?.address && userProfile.address !== 'Campus'
     ? userProfile.address
     : 'Add your address in profile to personalize this map view.';

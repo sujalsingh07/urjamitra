@@ -233,6 +233,19 @@ export default function Dashboard() {
   const [iesId, setIesId] = useState(null);
 
   const currentUserId = localUser?.id || localUser?._id || null;
+  const meterCacheKey = currentUserId ? `meterSnapshot:${currentUserId}` : null;
+
+  const applyLiveMeter = useCallback((nextMeter) => {
+    if (!nextMeter) return;
+    setLiveMeter(nextMeter);
+    if (meterCacheKey) {
+      try {
+        localStorage.setItem(meterCacheKey, JSON.stringify(nextMeter));
+      } catch {
+        // ignore localStorage quota/parse issues
+      }
+    }
+  }, [meterCacheKey]);
 
   const formatActivityTime = (isoDate) => {
     if (!isoDate) return 'Just now';
@@ -359,6 +372,21 @@ export default function Dashboard() {
   }, [localUser]);
 
   useEffect(() => {
+    if (!meterCacheKey) return;
+    try {
+      const cached = localStorage.getItem(meterCacheKey);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed && typeof parsed === 'object') {
+          setLiveMeter(parsed);
+        }
+      }
+    } catch {
+      // ignore cache parsing issues
+    }
+  }, [meterCacheKey]);
+
+  useEffect(() => {
     const loadDashboardData = async () => {
       setTimeout(() => setMounted(true), 60);
       await loadProfileAndCommunity();
@@ -376,7 +404,7 @@ export default function Dashboard() {
           // Load initial telemetry
           const t = await fetch(`${API_BASE}/ies/telemetry`, { headers: { Authorization: `Bearer ${token}` } });
           const td = await t.json();
-          if (td.success && td.meterState) setLiveMeter(td.meterState);
+          if (td.success && td.meterState) applyLiveMeter(td.meterState);
         }
       } catch (_) {}
     };
@@ -388,10 +416,10 @@ export default function Dashboard() {
     if (socket) {
       const uid = currentUserId;
       const handleTelemetry = (data) => {
-        if (uid && data.meters?.[uid]) setLiveMeter(data.meters[uid]);
+        if (uid && data.meters?.[uid]) applyLiveMeter(data.meters[uid]);
       };
       const handleInit = (data) => {
-        if (uid && data.meters?.[uid]) setLiveMeter(data.meters[uid]);
+        if (uid && data.meters?.[uid]) applyLiveMeter(data.meters[uid]);
       };
       socket.on('telemetry:update', handleTelemetry);
       socket.on('telemetry:init', handleInit);
@@ -400,7 +428,7 @@ export default function Dashboard() {
         socket.off('telemetry:init', handleInit);
       };
     }
-  }, [loadRecentActivity, loadProfileAndCommunity, currentUserId]);
+  }, [applyLiveMeter, loadRecentActivity, loadProfileAndCommunity, currentUserId]);
 
   useEffect(() => {
     const id = setInterval(() => {
