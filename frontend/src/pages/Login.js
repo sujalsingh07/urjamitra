@@ -80,6 +80,16 @@ export default function Login() {
   const [signupPass, setSignupPass] = useState('');
   const [signupPassConfirm, setSignupPassConfirm] = useState('');
 
+  const isProfileComplete = (user) => {
+    const mobileOk = /^\d{10}$/.test(String(user?.mobile || ''));
+    const address = String(user?.address || '').trim().toLowerCase();
+    const addressOk = Boolean(address) && address !== 'campus';
+    const lat = Number(user?.location?.latitude);
+    const lng = Number(user?.location?.longitude);
+    const locationOk = Number.isFinite(lat) && Number.isFinite(lng);
+    return mobileOk && addressOk && locationOk;
+  };
+
   const resetSignup = () => {
     setStep('email'); setSignupEmail(''); setOtpCode('');
     setEmailSent(false);
@@ -140,7 +150,7 @@ export default function Login() {
         localStorage.setItem('user', JSON.stringify(res.data.user));
         if (window.__socket) window.__socket.emit('register', res.data.user._id);
         setStep('done');
-        setTimeout(() => navigate('/dashboard'), 1500);
+        setTimeout(() => navigate(isProfileComplete(res.data.user) ? '/dashboard' : '/profile'), 1500);
       }
     } catch (err) {
       setError(err.response?.data?.message || 'Signup failed. Please try again.');
@@ -160,7 +170,7 @@ export default function Login() {
         if (window.__socket) {
           window.__socket.emit('register', res.data.user._id);
         }
-        navigate('/dashboard');
+        navigate(isProfileComplete(res.data.user) ? '/dashboard' : '/profile');
       }
     } catch (err) {
       setError(err.response?.data?.message || 'Something went wrong. Please try again.');

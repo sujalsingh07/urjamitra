@@ -62,6 +62,7 @@ function initiateTradeRequest(tradeId, sellerId, buyerId, units, listingId, io) 
     consentId,
     sellerId: sellerId.toString(),
     buyerId: buyerId.toString(),
+    listingId,
     units,
     status: 'awaiting_consent',
     phases: [],
@@ -183,6 +184,55 @@ async function processConsent(consentId, sellerId, decision, io) {
   }
 
   return { success: true, signature, status: 'approved', tradeId: consent.tradeId };
+}
+
+/**
+ * Buyer can cancel a trade while seller consent is still pending
+ */
+function cancelTradeRequest(tradeId, buyerId, io) {
+  const trade = tradeRequests.get(tradeId);
+  if (!trade) return { success: false, message: 'Trade not found' };
+
+  if (trade.buyerId !== buyerId.toString()) {
+    return { success: false, message: 'Only the buyer can cancel this trade' };
+  }
+
+  if (trade.status === 'cancelled_by_buyer') {
+    return { success: true, status: 'cancelled_by_buyer', trade };
+  }
+
+  if (trade.status !== 'awaiting_consent') {
+    return { success: false, message: `Cannot cancel trade in ${trade.status} state` };
+  }
+
+  const consent = consentStore.get(trade.consentId);
+  if (consent && consent.status === 'pending') {
+    consent.status = 'cancelled_by_buyer';
+    consent.cancelledAt = new Date();
+    consentStore.set(trade.consentId, consent);
+  }
+
+  trade.status = 'cancelled_by_buyer';
+  trade.log.push({
+    time: new Date().toISOString(),
+    event: '[IES] Buyer cancelled request before seller consent. Trade cancelled.',
+    level: 'warning'
+  });
+  tradeRequests.set(tradeId, trade);
+
+  if (io) {
+    const updatePayload = {
+      tradeId,
+      status: 'cancelled_by_buyer',
+      consentId: trade.consentId
+    };
+    io.to(`user:${trade.buyerId}`).emit('ies:trade_update', updatePayload);
+    io.to(`user:${trade.sellerId}`).emit('ies:trade_update', updatePayload);
+    io.to(`user:${trade.buyerId}`).emit('ies:log', { tradeId, logs: trade.log });
+    io.to(`user:${trade.sellerId}`).emit('ies:log', { tradeId, logs: trade.log });
+  }
+
+  return { success: true, status: 'cancelled_by_buyer', trade };
 }
 
 /**
@@ -315,6 +365,7 @@ module.exports = {
   getOrCreateIESId,
   initiateTradeRequest,
   processConsent,
+  cancelTradeRequest,
   verifyDISCOMlogs,
   completeTrade,
   getTradeStatus,

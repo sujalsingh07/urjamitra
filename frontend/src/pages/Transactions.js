@@ -49,6 +49,13 @@ export default function Transactions() {
   const [error, setError] = useState('');
   const [actionLoading, setActionLoading] = useState(null); // transactionId
   const [toast, setToast] = useState(null);
+  const [walletBalance, setWalletBalance] = useState(0);
+  const resolveWalletBalance = (userObj = {}) => Number(userObj.walletBalance ?? userObj.wallet ?? 0);
+  const formatKwh = (value) => {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return '0.00';
+    return (Math.trunc(n * 100) / 100).toFixed(2);
+  };
 
   const currentUserId = (() => {
     try { const u = JSON.parse(localStorage.getItem('user') || '{}'); return u.id || u._id || null; } catch { return null; }
@@ -81,7 +88,16 @@ export default function Transactions() {
   const fetchTransactions = async () => {
     try {
       setLoading(true);
-      const res = await api.getMyTransactions();
+      const [txRes, profileRes] = await Promise.all([
+        api.getMyTransactions(),
+        api.getMyProfile(),
+      ]);
+
+      if (profileRes?.success && profileRes?.user) {
+        setWalletBalance(resolveWalletBalance(profileRes.user));
+      }
+
+      const res = txRes;
       if (res.success) {
         const parsed = res.transactions.map(t => ({
           ...t,
@@ -148,7 +164,7 @@ export default function Transactions() {
         t.time,
         t.type === 'sold' ? 'Sold' : 'Bought',
         t.person,
-        t.units,
+        formatKwh(t.units),
         t.amount,
         STATUS_STYLE[t.status]?.label || t.status || '—'
       ])
@@ -222,11 +238,12 @@ export default function Transactions() {
               {[
                 { label: 'Total Earned', val: `₹${totalEarned}`, sub: 'from selling energy', bg: 'rgba(240,253,244,0.6)', border: 'rgba(134,239,172,0.5)', accent: '#15803d', sub2: '#16a34a' },
                 { label: 'Total Spent', val: `₹${totalSpent}`, sub: 'on buying energy', bg: 'rgba(240,249,255,0.6)', border: 'rgba(186,230,253,0.5)', accent: '#0369a1', sub2: '#0284c7' },
-                { label: 'Units Traded', val: `${totalUnits} kWh`, sub: 'total volume', bg: 'rgba(255,251,235,0.6)', border: 'rgba(252,211,77,0.5)', accent: '#b45309', sub2: '#d97706' },
+                { label: 'Units Traded', val: `${formatKwh(totalUnits)} kWh`, sub: 'total volume', bg: 'rgba(255,251,235,0.6)', border: 'rgba(252,211,77,0.5)', accent: '#b45309', sub2: '#d97706' },
+                { label: 'Wallet Balance', val: `₹${Number(walletBalance || 0).toFixed(2)}`, sub: 'currently available', bg: 'rgba(236,253,245,0.6)', border: 'rgba(110,231,183,0.5)', accent: '#047857', sub2: '#059669' },
               ].map((s, i) => (
                 <div key={s.label} className="um-card" style={{ background: s.bg, border: `1px solid ${s.border}`, borderRadius: 24, padding: '24px', animation: `fadeUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) ${0.2 + (i * 0.05)}s both` }}>
                   <p style={{ margin: '0 0 6px', fontSize: 12, color: s.sub2, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 1.2 }}>{s.label}</p>
-                  <p style={{ margin: '0 0 6px', fontSize: 32, fontWeight: 900, color: s.accent, fontFamily: "'Playfair Display',serif", letterSpacing: -1 }}>{s.val}</p>
+                  <p style={{ margin: '0 0 6px', fontSize: 32, fontWeight: 900, color: s.accent, fontFamily: "'DM Sans','Segoe UI',sans-serif", letterSpacing: -1 }}>{s.val}</p>
                   <p style={{ margin: 0, fontSize: 13, color: s.sub2, fontWeight: 600 }}>{s.sub} ⚡</p>
                 </div>
               ))}
@@ -287,7 +304,7 @@ export default function Transactions() {
                           💬
                         </button>
                       </div>
-                      <p style={{ margin: '4px 0 0', fontSize: 13, color: '#92400e', fontWeight: 500 }}>{t.time} <span style={{ opacity: 0.5 }}>•</span> <strong style={{ color: '#78350f' }}>{t.units} kWh</strong></p>
+                      <p style={{ margin: '4px 0 0', fontSize: 13, color: '#92400e', fontWeight: 500 }}>{t.time} <span style={{ opacity: 0.5 }}>•</span> <strong style={{ color: '#78350f' }}>{formatKwh(t.units)} kWh</strong></p>
                     </div>
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
@@ -342,7 +359,7 @@ export default function Transactions() {
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16 }}>
                   {[
                     [`${(totalUnits * 0.82).toFixed(1)} kg`, 'CO₂ Emissions Saved'],
-                    [`${totalUnits} kWh`, 'Clean Energy Traded'],
+                    [`${formatKwh(totalUnits)} kWh`, 'Clean Energy Traded'],
                     [`${Math.max(1, Math.round(totalUnits * 0.82 / 21))} 🌳`, 'Equivalent Trees Planted'],
                   ].map(([v, l]) => (
                     <div key={l} style={{ background: 'rgba(255,255,255,0.8)', backdropFilter: 'blur(8px)', borderRadius: 16, padding: '20px', border: '1px solid rgba(134,239,172,0.5)', transition: 'transform 0.3s cubic-bezier(0.16, 1, 0.3, 1)', cursor: 'default' }} onMouseOver={e => e.currentTarget.style.transform = 'translateY(-4px)'} onMouseOut={e => e.currentTarget.style.transform = 'translateY(0)'}>

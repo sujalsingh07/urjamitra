@@ -44,6 +44,11 @@ const youIcon = new L.Icon({
 });
 
 const isFiniteCoordinate = (value) => typeof value === "number" && Number.isFinite(value);
+const formatKwh = (value) => {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "0.00";
+  return (Math.trunc(n * 100) / 100).toFixed(2);
+};
 const INDIA_DEFAULT_CENTER = [22.7196, 75.8577]; // Indore, MP
 const isLikelyIndiaCoordinate = (lat, lng) =>
   isFiniteCoordinate(lat) &&
@@ -349,7 +354,7 @@ function MapView() {
 
                         <div style={{ background: '#fef9c3', borderRadius: 8, padding: '8px 10px', marginBottom: 12 }}>
                           <>
-                            <div style={{ fontSize: 13, color: '#78350f', fontWeight: 600 }}>Selling {seller.units} kWh</div>
+                            <div style={{ fontSize: 13, color: '#78350f', fontWeight: 600 }}>Selling {formatKwh(seller.units)} kWh</div>
                             <div style={{ fontSize: 16, color: '#15803d', fontWeight: 900 }}>₹{seller.price}/kWh</div>
                             {seller.listingCount > 1 && (
                               <div style={{ fontSize: 11, color: '#92400e', fontWeight: 700, marginTop: 4 }}>
@@ -374,7 +379,7 @@ function MapView() {
             {[
               { val: String(sellerCount), label: 'Sellers Nearby', color: '#15803d', bg: 'linear-gradient(135deg, #f0fdf4, #dcfce7)', border: '#86efac' },
               { val: '600 m', label: 'Trading Radius', color: '#0369a1', bg: 'linear-gradient(135deg, #f0f9ff, #e0f2fe)', border: '#7dd3fc' },
-              { val: `${totalAvailableEnergy} kWh`, label: 'Available Energy', color: '#b45309', bg: 'linear-gradient(135deg, #fff7ed, #ffedd5)', border: '#fdba74' },
+              { val: `${formatKwh(totalAvailableEnergy)} kWh`, label: 'Available Energy', color: '#b45309', bg: 'linear-gradient(135deg, #fff7ed, #ffedd5)', border: '#fdba74' },
             ].map((s, i) => (
               <div key={s.label} className="um-card" style={{ background: s.bg, border: `1px solid ${s.border}`, borderRadius: 20, padding: '20px', textAlign: 'center', animation: `fadeUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) ${i * 0.1}s both` }}>
                 <div style={{ fontSize: 24, fontWeight: 900, color: s.color, letterSpacing: '-1px' }}>{s.val}</div>

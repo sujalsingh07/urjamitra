@@ -88,3 +88,23 @@ exports.markAsRead = async (req, res) => {
         res.status(500).json({ success: false, message: 'Server error' });
     }
 }
+
+// Delete all messages in a conversation between the current user and another user
+exports.deleteConversation = async (req, res) => {
+    try {
+        const userId = req.userId;
+        const otherUserId = req.params.userId;
+
+        await Message.deleteMany({
+            $or: [
+                { senderId: userId, receiverId: otherUserId },
+                { senderId: otherUserId, receiverId: userId }
+            ]
+        });
+
+        res.json({ success: true });
+    } catch (error) {
+        console.error('Error deleting conversation:', error);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+}

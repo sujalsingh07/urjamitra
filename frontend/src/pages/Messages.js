@@ -62,6 +62,10 @@ const CSS = `
   .chat-scroll::-webkit-scrollbar { width: 6px; }
   .chat-scroll::-webkit-scrollbar-track { background: transparent; }
   .chat-scroll::-webkit-scrollbar-thumb { background: rgba(253,230,138,0.8); border-radius: 10px; }
+
+  /* Show delete button on conversation item hover */
+  .convo-item:hover .delete-chat-btn { opacity: 1 !important; }
+  .delete-chat-btn:hover { background: rgba(254, 226, 226, 0.95) !important; border-color: #fca5a5 !important; }
 `;
 
 export default function Messages() {
@@ -71,6 +75,7 @@ export default function Messages() {
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState("");
   const [loading, setLoading] = useState(true);
+  const [confirmDelete, setConfirmDelete] = useState(null); // { userId, name }
   
   const socketRef = useRef();
   const messagesEndRef = useRef(null);
@@ -184,6 +189,19 @@ export default function Messages() {
     } catch (err) { console.error("Failed to load history", err); }
   };
 
+  const handleDeleteConversation = async () => {
+    if (!confirmDelete) return;
+    try {
+      await api.deleteConversation(confirmDelete.userId);
+      setConversations(prev => prev.filter(c => (c.user._id || c.user.id) !== confirmDelete.userId));
+      if (activeUser && (activeUser._id || activeUser.id) === confirmDelete.userId) {
+        setActiveUser(null);
+        setMessages([]);
+      }
+    } catch (err) { console.error('Delete failed', err); }
+    setConfirmDelete(null);
+  };
+
   const sendMessage = (e) => {
     e.preventDefault();
     if (!newMessage.trim() || !activeUser || !socketRef.current) return;
@@ -217,7 +235,28 @@ export default function Messages() {
     }}>
       <style>{CSS}</style>
 
-      {/* HEADER */}
+      {/* Confirm-delete modal */}
+      {confirmDelete && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ background: '#fff', borderRadius: 20, padding: 32, maxWidth: 360, width: '90%', textAlign: 'center', boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
+            <div style={{ fontSize: 40, marginBottom: 12 }}>🗑️</div>
+            <h3 style={{ margin: '0 0 8px', fontSize: 18, fontWeight: 800, color: '#451a03' }}>Delete Chat?</h3>
+            <p style={{ margin: '0 0 24px', fontSize: 14, color: '#92400e' }}>All messages with <strong>{confirmDelete.name}</strong> will be permanently deleted for you.</p>
+            <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
+              <button
+                type="button"
+                onClick={() => setConfirmDelete(null)}
+                style={{ border: '1px solid rgba(253,230,138,0.8)', borderRadius: 12, padding: '10px 20px', fontSize: 14, fontWeight: 700, color: '#92400e', background: '#fffbeb', cursor: 'pointer' }}
+              >Cancel</button>
+              <button
+                type="button"
+                onClick={handleDeleteConversation}
+                style={{ border: 'none', borderRadius: 12, padding: '10px 20px', fontSize: 14, fontWeight: 800, color: '#fff', background: 'linear-gradient(135deg,#ef4444,#dc2626)', cursor: 'pointer' }}
+              >Delete</button>
+            </div>
+          </div>
+        </div>
+      )}
       <div style={{ padding: '32px 24px 24px', flexShrink: 0 }}>
         <div style={{ maxWidth: 1080, margin: '0 auto', animation: 'fadeUp 0.6s cubic-bezier(0.16, 1, 0.3, 1)' }}>
           <h1 style={{ margin: '0 0 4px', fontSize: 28, fontWeight: 900, color: '#451a03', fontFamily: "'Playfair Display',serif", letterSpacing: -1 }}>💬 Messages</h1>
@@ -248,7 +287,7 @@ export default function Messages() {
                  const hasUnread = c.lastMessage && !c.lastMessage.read && String(c.lastMessage.receiverId) === String(currentUserId);
                  
                  return (
-                 <div key={i} onClick={() => openChat(u)} className={`convo-item ${isActive ? 'active' : ''}`} style={{ padding: '16px 20px', display: 'flex', alignItems: 'center', gap: 14, borderBottom: '1px solid rgba(253,230,138,0.2)' }}>
+                 <div key={i} className={`convo-item ${isActive ? 'active' : ''}`} onClick={() => openChat(u)} style={{ padding: '16px 20px', display: 'flex', alignItems: 'center', gap: 14, borderBottom: '1px solid rgba(253,230,138,0.2)', position: 'relative' }}>
                    <div style={{ width: 44, height: 44, borderRadius: 12, background: 'linear-gradient(135deg,#fef08a,#f59e0b)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#92400e', fontWeight: 900, fontSize: 18, flexShrink: 0, position: 'relative' }}>
                      {u.name?.charAt(0) || 'U'}
                      {hasUnread && <div style={{ position: 'absolute', top: -4, right: -4, width: 12, height: 12, background: '#ef4444', borderRadius: '50%', border: '2px solid #fff' }} />}
@@ -264,6 +303,14 @@ export default function Messages() {
                         {c.lastMessage ? (String(c.lastMessage.senderId) === String(currentUserId) ? `You: ${c.lastMessage.content}` : c.lastMessage.content) : "Start chatting..."}
                      </p>
                    </div>
+                   {/* Delete button - shown on hover via CSS class */}
+                   <button
+                     type="button"
+                     className="delete-chat-btn"
+                     onClick={(e) => { e.stopPropagation(); setConfirmDelete({ userId: u._id || u.id, name: u.name }); }}
+                     title="Delete conversation"
+                     style={{ position: 'absolute', right: 14, top: '50%', transform: 'translateY(-50%)', background: 'rgba(254,243,199,0.9)', border: '1px solid rgba(253,230,138,0.8)', borderRadius: 8, width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', opacity: 0, transition: 'opacity 0.2s', fontSize: 13 }}
+                   >🗑️</button>
                  </div>
                )})
             )}

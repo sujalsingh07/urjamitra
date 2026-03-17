@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../services/api';
 
@@ -95,8 +95,18 @@ export default function Marketplace() {
   const [tradePhase, setTradePhase] = useState('idle');
   const [tradeReceipt, setTradeReceipt] = useState(null);
   const [pendingConsent, setPendingConsent] = useState(null);
+  const [consentNotice, setConsentNotice] = useState('');
   const [walletBalance, setWalletBalance] = useState(0);
   const [consumeUnusedOnPost, setConsumeUnusedOnPost] = useState(false);
+  const handledConsentRef = useRef(new Set());
+  const consentActionInFlightRef = useRef(false);
+
+  const resolveWalletBalance = (userObj = {}) => Number(userObj.walletBalance ?? userObj.wallet ?? 0);
+  const formatKwh = (value) => {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return '0.00';
+    return (Math.trunc(n * 100) / 100).toFixed(2);
+  };
 
   useEffect(() => { fetchListings(); }, []);
 
@@ -174,10 +184,21 @@ export default function Marketplace() {
     };
 
     const onTradeUpdate = (payload) => {
-      if (!activeTradeId || payload?.tradeId !== activeTradeId) return;
+      const matchesActiveTrade = !!activeTradeId && payload?.tradeId === activeTradeId;
+      const matchesPendingConsent = !!pendingConsent && (
+        payload?.tradeId === pendingConsent.tradeId ||
+        (payload?.consentId && payload?.consentId === pendingConsent.consentId)
+      );
+      if (!matchesActiveTrade && !matchesPendingConsent) return;
       const status = payload?.status;
       if (status === 'consent_approved') setTradePhase('verifying');
       else if (status === 'discom_verified') setTradePhase('settling');
+      else if (status === 'cancelled_by_buyer') {
+        setTradePhase('cancelled');
+        setConsentNotice('Consent already cancelled_by_buyer');
+        setActiveTradeId(null);
+        setBuyResult({ status: 'ok', message: 'Trade request was cancelled by buyer.' });
+      }
       else if (status === 'consent_rejected') {
         setTradePhase('failed');
         setBuyResult({ status: 'err', message: 'Seller rejected consent. Trade cancelled.' });
@@ -186,8 +207,10 @@ export default function Marketplace() {
 
     const onConsentRequest = (payload) => {
       if (!payload?.consentId) return;
+      if (handledConsentRef.current.has(payload.consentId)) return;
       if (!activeTradeId) setActiveTradeId(payload.tradeId);
       setPendingConsent(payload);
+      setConsentNotice('');
       setTradePhase('awaiting_my_consent');
       setTradeLogs((prev) => [
         ...prev,
@@ -206,7 +229,7 @@ export default function Marketplace() {
         {
           time: new Date().toISOString(),
           level: 'success',
-          event: `[DISCOM] ✅ Trade approved and settled for ${payload?.units ?? buyUnits} kWh.`,
+          event: `[DISCOM] ✅ Trade approved and settled for ${formatKwh(payload?.units ?? buyUnits)} kWh.`,
         },
         {
           time: new Date().toISOString(),
@@ -235,7 +258,7 @@ export default function Marketplace() {
       socket.off('ies:consent_request', onConsentRequest);
       socket.off('ies:settlement', onSettlement);
     };
-  }, [activeTradeId]);
+  }, [activeTradeId, pendingConsent]);
 
   const getCurrentUserId = () => {
     try {
@@ -266,7 +289,7 @@ export default function Marketplace() {
   const loadWalletFromProfile = async () => {
     const profileRes = await api.getMyProfile();
     if (profileRes?.success && profileRes?.user) {
-      const nextWallet = Number(profileRes.user.wallet || 0);
+      const nextWallet = resolveWalletBalance(profileRes.user);
       setWalletBalance(nextWallet);
       try {
         const current = JSON.parse(localStorage.getItem('user') || '{}');
@@ -279,7 +302,7 @@ export default function Marketplace() {
 
     try {
       const localUser = JSON.parse(localStorage.getItem('user') || '{}');
-      setWalletBalance(Number(localUser.wallet || 0));
+      setWalletBalance(resolveWalletBalance(localUser));
     } catch {
       setWalletBalance(0);
     }
@@ -368,6 +391,7 @@ export default function Marketplace() {
     setTradePhase('idle');
     setTradeReceipt(null);
     setPendingConsent(null);
+    setConsentNotice('');
     loadWalletFromProfile();
   };
 
@@ -401,14 +425,54 @@ export default function Marketplace() {
     }
   };
 
-  const handleConsentDecision = async (decision) => {
-    if (!pendingConsent?.consentId) return;
+  const handleCancelTransactionRequest = async () => {
+    if (!activeTradeId) {
+      setBuyModal(null);
+      return;
+    }
+
     setBuyLoading(true);
     try {
-      const res = await api.approveConsent(pendingConsent.consentId, decision);
+      const res = await api.cancelIESTrade(activeTradeId);
       if (res?.success) {
-        setTradePhase(decision === 'approve' ? 'verifying' : 'failed');
+        setTradePhase('cancelled');
         setPendingConsent(null);
+        setTradeLogs((prev) => [
+          ...prev,
+          {
+            time: new Date().toISOString(),
+            level: 'warning',
+            event: '[IES] Buyer cancelled this trade before seller consent.',
+          },
+        ]);
+        setBuyResult({ status: 'ok', message: 'Trade request cancelled.' });
+        setActiveTradeId(null);
+        setBuyModal(null);
+      } else {
+        setBuyResult({ status: 'err', message: res?.message || 'Unable to cancel trade request.' });
+      }
+    } catch (err) {
+      setBuyResult({ status: 'err', message: err?.response?.data?.message || 'Unable to cancel trade request.' });
+    } finally {
+      setBuyLoading(false);
+    }
+  };
+
+  const handleConsentDecision = async (decision) => {
+    if (!pendingConsent?.consentId || consentActionInFlightRef.current || buyLoading) return;
+    const snapshot = pendingConsent;
+    const consentId = snapshot.consentId;
+    consentActionInFlightRef.current = true;
+
+    // Always close the popup immediately — never restore it
+    handledConsentRef.current.add(consentId);
+    setPendingConsent(null);
+    setBuyLoading(true);
+    try {
+      const res = await api.approveConsent(consentId, decision);
+      if (res?.success) {
+        setConsentNotice('');
+        setTradePhase(decision === 'approve' ? 'verifying' : 'failed');
         setTradeLogs((prev) => [
           ...prev,
           {
@@ -419,15 +483,28 @@ export default function Marketplace() {
               : '[IES] Seller rejected consent. Trade cancelled.',
           },
         ]);
+        navigate('/transactions');
       } else {
+        if (String(res?.message || '').includes('cancelled_by_buyer')) {
+          setPendingConsent(snapshot);
+          setConsentNotice('Consent already cancelled_by_buyer');
+          return;
+        }
         setTradePhase('failed');
         setBuyResult({ status: 'err', message: res?.message || 'Unable to process consent decision.' });
       }
     } catch (err) {
+      const errMsg = err?.response?.data?.message || 'Consent approval failed.';
+      if (String(errMsg).includes('cancelled_by_buyer')) {
+        setPendingConsent(snapshot);
+        setConsentNotice('Consent already cancelled_by_buyer');
+        return;
+      }
       setTradePhase('failed');
-      setBuyResult({ status: 'err', message: err?.response?.data?.message || 'Consent approval failed.' });
+      setBuyResult({ status: 'err', message: errMsg });
     } finally {
       setBuyLoading(false);
+      consentActionInFlightRef.current = false;
     }
   };
 
@@ -582,7 +659,7 @@ export default function Marketplace() {
                     <div style={{ fontSize: 28, fontWeight: 900, color: '#451a03', letterSpacing: -1, marginBottom: 4 }}>
                       ₹{listing.pricePerUnit}<span style={{ fontSize: 14, color: '#92400e', fontWeight: 600 }}>/kWh</span>
                     </div>
-                    <p style={{ margin: '0 0 12px', fontSize: 13, color: '#a16207', fontWeight: 700 }}>{listing.units} kWh available</p>
+                    <p style={{ margin: '0 0 12px', fontSize: 13, color: '#a16207', fontWeight: 700 }}>{formatKwh(listing.units)} kWh available</p>
                     {viewMode === 'my' ? (
                       <button onClick={() => handleDeleteListing(listing._id)} style={{
                         background: '#fff1f2',
@@ -662,10 +739,6 @@ export default function Marketplace() {
                 </div>
               )}
 
-              <div style={{ background: '#fffbeb', border: '1px solid #fde047', borderRadius: 14, padding: '14px 16px', marginBottom: 24 }}>
-                <p style={{ margin: 0, fontSize: 13, color: '#92400e', display: 'flex', alignItems: 'center', gap: 8 }}><span style={{ fontSize: 16 }}>💡</span> <span>Avg price in your area: <strong style={{ color: '#78350f' }}>₹16–20/kWh</strong></span></p>
-              </div>
-
               <div style={{ display: 'flex', gap: 12 }}>
                 <button onClick={() => setShowListModal(false)} style={{ flex: 1, padding: '16px', background: 'rgba(253,230,138,0.3)', color: '#92400e', border: '1px solid rgba(253,230,138,0.8)', borderRadius: 16, fontWeight: 800, fontSize: 15, cursor: 'pointer', fontFamily: 'inherit', transition: 'all 0.2s' }}>Cancel</button>
                 <button onClick={handleCreateListing} className="gradient-btn" style={{ flex: 2, padding: '16px', borderRadius: 16, fontSize: 15 }}>Post Listing ⚡</button>
@@ -682,15 +755,17 @@ export default function Marketplace() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
               <div>
                 <h2 style={{ margin: '0 0 4px', fontSize: 22, fontWeight: 900, color: '#451a03', letterSpacing: -0.5 }}>⚡ Buy With Live IES Flow</h2>
-                <p style={{ margin: 0, fontSize: 13, color: '#92400e', fontWeight: 500 }}>From <strong>{buyModal.seller?.name || 'Seller'}</strong> · ₹{buyModal.pricePerUnit}/kWh · {buyModal.units} kWh available</p>
+                <p style={{ margin: 0, fontSize: 13, color: '#92400e', fontWeight: 500 }}>From <strong>{buyModal.seller?.name || 'Seller'}</strong> · ₹{buyModal.pricePerUnit}/kWh · {formatKwh(buyModal.units)} kWh available</p>
               </div>
-              <button onClick={() => setBuyModal(null)} style={{ background: '#fef9c3', border: '1px solid #fde68a', borderRadius: '50%', width: 36, height: 36, cursor: 'pointer', fontSize: 14, color: '#92400e', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
+              {!tradeReceipt && (
+                <button onClick={() => setBuyModal(null)} style={{ background: '#fef9c3', border: '1px solid #fde68a', borderRadius: '50%', width: 36, height: 36, cursor: 'pointer', fontSize: 14, color: '#92400e', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
+              )}
             </div>
 
             {/* Wallet balance pill */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'rgba(255,251,235,0.8)', border: '1px solid #fde68a', borderRadius: 12, padding: '10px 16px', marginBottom: 20 }}>
               <span style={{ fontSize: 12, color: '#92400e', fontWeight: 700 }}>💳 Your Wallet Balance</span>
-              <span style={{ fontSize: 16, fontWeight: 900, color: walletBalance > 0 ? '#15803d' : '#b91c1c', letterSpacing: -0.5 }}>₹{walletBalance}</span>
+              <span style={{ fontSize: 16, fontWeight: 900, color: walletBalance > 0 ? '#15803d' : '#b91c1c', letterSpacing: -0.5 }}>₹{Number(walletBalance || 0).toFixed(2)}</span>
             </div>
 
             {buyResult && tradePhase === 'failed' ? (
@@ -709,7 +784,7 @@ export default function Marketplace() {
                 <>
                 <div style={{ marginBottom: 16 }}>
                   <label style={{ fontSize: 11, fontWeight: 800, color: '#a16207', display: 'block', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>Units to request (kWh)</label>
-                  <input type="number" placeholder={`Max ${buyModal.units} kWh`} max={buyModal.units} min={0.1} step={0.1} value={buyUnits} onChange={e => setBuyUnits(e.target.value)} className="premium-input" />
+                  <input type="number" placeholder={`Max ${formatKwh(buyModal.units)} kWh`} max={buyModal.units} min={0.1} step={0.1} value={buyUnits} onChange={e => setBuyUnits(e.target.value)} className="premium-input" />
                 </div>
 
                 {buyUnits && parseFloat(buyUnits) > 0 && (() => {
@@ -725,7 +800,7 @@ export default function Marketplace() {
                         <span style={{ fontSize: 18, fontWeight: 900, color: isInvalid ? '#b91c1c' : '#15803d' }}>₹{total.toFixed(0)}</span>
                       </div>
                       {overLimit ? (
-                        <p style={{ margin: 0, fontSize: 11, color: '#b91c1c', fontWeight: 700 }}>⚠ Only {buyModal.units} kWh available — reduce your request</p>
+                        <p style={{ margin: 0, fontSize: 11, color: '#b91c1c', fontWeight: 700 }}>⚠ Only {formatKwh(buyModal.units)} kWh available — reduce your request</p>
                       ) : !canAfford ? (
                         <p style={{ margin: 0, fontSize: 11, color: '#b91c1c', fontWeight: 700 }}>⚠ Insufficient balance — you need ₹{(total - walletBalance).toFixed(0)} more</p>
                       ) : (
@@ -765,8 +840,8 @@ export default function Marketplace() {
                       <div style={{ background: '#eff6ff', border: '1px solid #93c5fd', borderRadius: 12, padding: '12px 14px', marginBottom: 10 }}>
                         <p style={{ margin: '0 0 8px', fontSize: 12, color: '#1d4ed8', fontWeight: 800 }}>Consent required for this trade.</p>
                         <div style={{ display: 'flex', gap: 8 }}>
-                          <button onClick={() => handleConsentDecision('approve')} className="gradient-btn" style={{ flex: 1, padding: '10px 12px', borderRadius: 10, fontSize: 12 }}>Approve Consent</button>
-                          <button onClick={() => handleConsentDecision('reject')} style={{ flex: 1, padding: '10px 12px', borderRadius: 10, fontSize: 12, background: '#fff1f2', color: '#be123c', border: '1px solid #fda4af', fontWeight: 800, cursor: 'pointer' }}>Reject</button>
+                          <button disabled={buyLoading} onClick={() => handleConsentDecision('approve')} className="gradient-btn" style={{ flex: 1, padding: '10px 12px', borderRadius: 10, fontSize: 12, opacity: buyLoading ? 0.7 : 1 }}>Approve Consent</button>
+                          <button disabled={buyLoading} onClick={() => handleConsentDecision('reject')} style={{ flex: 1, padding: '10px 12px', borderRadius: 10, fontSize: 12, background: '#fff1f2', color: '#be123c', border: '1px solid #fda4af', fontWeight: 800, cursor: 'pointer', opacity: buyLoading ? 0.7 : 1 }}>Reject</button>
                         </div>
                       </div>
                     )}
@@ -780,16 +855,35 @@ export default function Marketplace() {
                   </div>
                 )}
 
-                <div style={{ display: 'flex', gap: 12 }}>
-                  <button onClick={() => setBuyModal(null)} style={{ flex: 1, padding: '16px', background: 'rgba(253,230,138,0.3)', color: '#92400e', border: '1px solid rgba(253,230,138,0.8)', borderRadius: 16, fontWeight: 800, fontSize: 15, cursor: 'pointer', fontFamily: 'inherit' }}>Cancel</button>
+                {tradeReceipt ? (
                   <button
-                    onClick={handleRequestTransaction}
-                    disabled={buyLoading || activeTradeId || !buyUnits || parseFloat(buyUnits) <= 0 || parseFloat(buyUnits) > buyModal.units || walletBalance < parseFloat(buyUnits) * buyModal.pricePerUnit}
+                    onClick={() => {
+                      setBuyModal(null);
+                      setActiveTradeId(null);
+                      setTradePhase('idle');
+                      setTradeLogs([]);
+                      setTradeReceipt(null);
+                      setPendingConsent(null);
+                      setBuyResult(null);
+                      navigate('/transactions');
+                    }}
                     className="gradient-btn"
-                    style={{ flex: 2, padding: '16px', borderRadius: 16, fontSize: 15, opacity: (activeTradeId || !buyUnits || parseFloat(buyUnits) <= 0 || parseFloat(buyUnits) > buyModal.units || walletBalance < parseFloat(buyUnits) * buyModal.pricePerUnit) ? 0.5 : 1 }}>
-                    {buyLoading ? 'Starting IES Flow…' : activeTradeId ? 'IES Flow Running…' : 'Initiate IES Trade ⚡'}
+                    style={{ width: '100%', padding: '16px', borderRadius: 16, fontSize: 15 }}
+                  >
+                    OK
                   </button>
-                </div>
+                ) : (
+                  <div style={{ display: 'flex', gap: 12 }}>
+                    <button onClick={handleCancelTransactionRequest} disabled={buyLoading} style={{ flex: 1, padding: '16px', background: 'rgba(253,230,138,0.3)', color: '#92400e', border: '1px solid rgba(253,230,138,0.8)', borderRadius: 16, fontWeight: 800, fontSize: 15, cursor: 'pointer', fontFamily: 'inherit', opacity: buyLoading ? 0.7 : 1 }}>{activeTradeId ? 'Cancel Request' : 'Cancel'}</button>
+                    <button
+                      onClick={handleRequestTransaction}
+                      disabled={buyLoading || activeTradeId || !buyUnits || parseFloat(buyUnits) <= 0 || parseFloat(buyUnits) > buyModal.units || walletBalance < parseFloat(buyUnits) * buyModal.pricePerUnit}
+                      className="gradient-btn"
+                      style={{ flex: 2, padding: '16px', borderRadius: 16, fontSize: 15, opacity: (activeTradeId || !buyUnits || parseFloat(buyUnits) <= 0 || parseFloat(buyUnits) > buyModal.units || walletBalance < parseFloat(buyUnits) * buyModal.pricePerUnit) ? 0.5 : 1 }}>
+                      {buyLoading ? 'Starting IES Flow…' : activeTradeId ? 'IES Flow Running…' : 'Initiate IES Trade ⚡'}
+                    </button>
+                  </div>
+                )}
               </>
             )}
           </div>
@@ -813,21 +907,39 @@ export default function Marketplace() {
                 Units requested: <strong>{pendingConsent.units} kWh</strong>
               </p>
             </div>
-            <div style={{ display: 'flex', gap: 10 }}>
-              <button
-                onClick={() => handleConsentDecision('approve')}
-                className="gradient-btn"
-                style={{ flex: 1, padding: '12px 14px', borderRadius: 12, fontSize: 13 }}
-              >
-                Accept ✅
-              </button>
-              <button
-                onClick={() => handleConsentDecision('reject')}
-                style={{ flex: 1, padding: '12px 14px', borderRadius: 12, fontSize: 13, background: '#fff1f2', color: '#be123c', border: '1px solid #fda4af', fontWeight: 800, cursor: 'pointer' }}
-              >
-                Decline ❌
-              </button>
-            </div>
+            {consentNotice ? (
+              <>
+                <p style={{ margin: '0 0 12px', color: '#b91c1c', fontWeight: 800 }}>{consentNotice}</p>
+                <button
+                  onClick={() => {
+                    setPendingConsent(null);
+                    setConsentNotice('');
+                    setTradePhase('idle');
+                  }}
+                  style={{ width: '100%', padding: '12px 14px', borderRadius: 12, fontSize: 13, background: '#fff7ed', color: '#9a3412', border: '1px solid #fdba74', fontWeight: 800, cursor: 'pointer' }}
+                >
+                  Close
+                </button>
+              </>
+            ) : (
+              <div style={{ display: 'flex', gap: 10 }}>
+                <button
+                  disabled={buyLoading}
+                  onClick={() => handleConsentDecision('approve')}
+                  className="gradient-btn"
+                  style={{ flex: 1, padding: '12px 14px', borderRadius: 12, fontSize: 13, opacity: buyLoading ? 0.7 : 1 }}
+                >
+                  Accept ✅
+                </button>
+                <button
+                  disabled={buyLoading}
+                  onClick={() => handleConsentDecision('reject')}
+                  style={{ flex: 1, padding: '12px 14px', borderRadius: 12, fontSize: 13, background: '#fff1f2', color: '#be123c', border: '1px solid #fda4af', fontWeight: 800, cursor: 'pointer', opacity: buyLoading ? 0.7 : 1 }}
+                >
+                  Decline ❌
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}

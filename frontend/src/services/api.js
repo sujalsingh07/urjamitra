@@ -382,6 +382,12 @@ export const api = {
   getChatHistory,
   markMessagesAsRead,
   sendUserMessage,
+  deleteConversation: async (userId) => {
+    try {
+      const res = await apiClient.delete(`/messages/conversation/${userId}`);
+      return res.data;
+    } catch (e) { return handleError(e); }
+  },
 
   /* ── IES / Smart Meter ───────────────────────── */
   getIESIdentity: async () => {
@@ -402,6 +408,13 @@ export const api = {
   initiateIESTrade: async (listingId, units) => {
     try {
       const r = await apiClient.post('/ies/trade/initiate', { listingId, units });
+      return r.data;
+    } catch (e) { return handleError(e); }
+  },
+
+  cancelIESTrade: async (tradeId) => {
+    try {
+      const r = await apiClient.post(`/ies/trade/${tradeId}/cancel`);
       return r.data;
     } catch (e) { return handleError(e); }
   },

@@ -35,7 +35,7 @@ function AnimatedRoutes() {
         <Route
           path="/profile"
           element={
-            <ProtectedRoute>
+            <ProtectedRoute requireCompleteProfile={false}>
               <Layout>
                 <PageTransition>
                   <Profile />

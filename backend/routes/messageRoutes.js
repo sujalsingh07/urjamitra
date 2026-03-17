@@ -18,5 +18,6 @@ const authenticateToken = (req, res, next) => {
 router.get('/conversations', authenticateToken, messageController.getConversations);
 router.get('/history/:userId', authenticateToken, messageController.getChatHistory);
 router.put('/read/:userId', authenticateToken, messageController.markAsRead);
+router.delete('/conversation/:userId', authenticateToken, messageController.deleteConversation);
 
 module.exports = router;

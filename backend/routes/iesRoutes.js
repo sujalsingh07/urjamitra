@@ -180,6 +180,69 @@ router.post('/trade/initiate', authenticateToken, async (req, res) => {
 });
 
 /**
+ * POST /api/ies/trade/:tradeId/cancel
+ * Buyer cancels trade while waiting for seller consent
+ */
+router.post('/trade/:tradeId/cancel', authenticateToken, async (req, res) => {
+  try {
+    const { tradeId } = req.params;
+    const buyerId = req.userId;
+
+    const result = ies.cancelTradeRequest(tradeId, buyerId, req.io);
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+
+    const trade = result.trade;
+    const listing = await Listing.findById(trade.listingId).select('pricePerUnit');
+    const pricePerUnit = Number(listing?.pricePerUnit || 0);
+    const units = Number(trade.units || 0);
+    const totalAmount = Number((units * pricePerUnit).toFixed(2));
+
+    const existingCancelled = await Transaction.findOne({
+      buyer: trade.buyerId,
+      seller: trade.sellerId,
+      listing: trade.listingId,
+      status: 'cancelled',
+      statusReason: `IES Trade: ${tradeId}`
+    }).select('_id');
+
+    if (!existingCancelled) {
+      const cancelledTx = await Transaction.create({
+        seller: trade.sellerId,
+        buyer: trade.buyerId,
+        listing: trade.listingId,
+        units,
+        pricePerUnit,
+        totalAmount,
+        grossAmount: totalAmount,
+        netAmount: 0,
+        holdAmount: 0,
+        deliveredUnits: 0,
+        status: 'cancelled',
+        transactionType: 'purchase',
+        cancelledAt: new Date(),
+        statusReason: `IES Trade: ${tradeId}`
+      });
+
+      await Promise.all([
+        User.findByIdAndUpdate(trade.buyerId, { $push: { transactions: cancelledTx._id } }),
+        User.findByIdAndUpdate(trade.sellerId, { $push: { transactions: cancelledTx._id } })
+      ]);
+    }
+
+    res.json({
+      success: true,
+      tradeId,
+      status: 'cancelled_by_buyer',
+      message: 'Trade request cancelled.'
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+/**
  * POST /api/ies/consent/:consentId/approve
  * Phase 2: Seller approves or rejects consent
  */
@@ -194,8 +257,59 @@ router.post('/consent/:consentId/approve', authenticateToken, async (req, res) =
 
     const result = await ies.processConsent(consentId, req.userId, decision === 'approve' ? 'approve' : 'reject', req.io);
 
-    if (!result.success) {
+    // For seller reject, simulator returns success=false with status=rejected.
+    // Treat that as an expected terminal outcome (not an API error).
+    if (!result.success && !(decision === 'reject' && result.status === 'rejected')) {
       return res.status(400).json(result);
+    }
+
+    if (decision === 'reject' && result.status === 'rejected') {
+      const consent = ies.consentStore.get(consentId);
+      if (consent?.tradeId && consent?.listingId) {
+        const existingRejected = await Transaction.findOne({
+          buyer: consent.buyerId,
+          seller: consent.sellerId,
+          listing: consent.listingId,
+          status: 'seller_rejected',
+          statusReason: `IES Trade: ${consent.tradeId}`
+        }).select('_id');
+
+        if (!existingRejected) {
+          const listing = await Listing.findById(consent.listingId).select('pricePerUnit');
+          const pricePerUnit = Number(listing?.pricePerUnit || 0);
+          const units = Number(consent.units || 0);
+          const totalAmount = Number((units * pricePerUnit).toFixed(2));
+
+          const rejectedTx = await Transaction.create({
+            seller: consent.sellerId,
+            buyer: consent.buyerId,
+            listing: consent.listingId,
+            units,
+            pricePerUnit,
+            totalAmount,
+            grossAmount: totalAmount,
+            netAmount: 0,
+            holdAmount: 0,
+            deliveredUnits: 0,
+            status: 'seller_rejected',
+            transactionType: 'purchase',
+            cancelledAt: new Date(),
+            statusReason: `IES Trade: ${consent.tradeId}`
+          });
+
+          await Promise.all([
+            User.findByIdAndUpdate(consent.buyerId, { $push: { transactions: rejectedTx._id } }),
+            User.findByIdAndUpdate(consent.sellerId, { $push: { transactions: rejectedTx._id } })
+          ]);
+        }
+      }
+
+      return res.json({
+        success: true,
+        status: 'rejected',
+        tradeId: result.tradeId,
+        message: 'Trade request rejected by seller.'
+      });
     }
 
     // If approved, trigger DISCOM verification
