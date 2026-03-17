@@ -6,6 +6,9 @@ import { api } from "../services/api";
 export default function Layout({ children }) {
   const [isSidebarOpen, setSidebarOpen] = useState(false);
   const navigate = useNavigate();
+  const [iesConsent, setIesConsent] = useState(null);
+  const [iesConsentBusy, setIesConsentBusy] = useState(false);
+  const [iesConsentError, setIesConsentError] = useState('');
 
   // ── notification state ─────────────────────────────────────────────────────
   const [notifications, setNotifications]   = useState([]);
@@ -122,6 +125,49 @@ export default function Layout({ children }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUserId]);
 
+  // Global IES consent listener so seller can approve from any page.
+  useEffect(() => {
+    if (!currentUserId) return;
+    const socket = window.__socket;
+    if (!socket) return;
+
+    if (socket.connected) {
+      socket.emit('register', currentUserId);
+    }
+
+    const onConnect = () => socket.emit('register', currentUserId);
+    const onConsent = (payload) => {
+      setIesConsentError('');
+      setIesConsent(payload);
+    };
+
+    socket.on('connect', onConnect);
+    socket.on('ies:consent_request', onConsent);
+
+    return () => {
+      socket.off('connect', onConnect);
+      socket.off('ies:consent_request', onConsent);
+    };
+  }, [currentUserId]);
+
+  const handleIesConsentDecision = async (decision) => {
+    if (!iesConsent?.consentId) return;
+    setIesConsentBusy(true);
+    setIesConsentError('');
+    try {
+      const res = await api.approveConsent(iesConsent.consentId, decision);
+      if (!res?.success) {
+        setIesConsentError(res?.message || 'Unable to submit consent decision.');
+        return;
+      }
+      setIesConsent(null);
+    } catch (err) {
+      setIesConsentError(err?.response?.data?.message || 'Consent request failed.');
+    } finally {
+      setIesConsentBusy(false);
+    }
+  };
+
   // Auto-close buyer update notifications
   useEffect(() => {
     notifications.forEach(n => {
@@ -220,6 +266,44 @@ export default function Layout({ children }) {
           );
         })}
       </div>
+
+      {iesConsent && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000, backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)' }}>
+          <div style={{ width: 'min(92vw, 500px)', background: '#fffef8', border: '1px solid #fde68a', borderRadius: 18, boxShadow: '0 20px 60px rgba(120,53,15,0.25)', padding: 22, pointerEvents: 'all' }}>
+            <h3 style={{ margin: '0 0 6px', fontSize: 20, color: '#7c2d12', fontWeight: 900 }}>🔐 New IES Consent Request</h3>
+            <p style={{ margin: '0 0 14px', color: '#92400e', fontSize: 13, lineHeight: 1.5 }}>
+              Buyer requested <strong>{iesConsent.units} kWh</strong>. Approve or decline to continue DISCOM verification.
+            </p>
+            <div style={{ background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 12, padding: '10px 12px', marginBottom: 14 }}>
+              <p style={{ margin: '0 0 4px', fontSize: 12, color: '#92400e' }}>
+                Trade: <strong style={{ fontFamily: 'monospace' }}>{iesConsent.tradeId}</strong>
+              </p>
+              <p style={{ margin: 0, fontSize: 12, color: '#92400e' }}>
+                Consent: <strong style={{ fontFamily: 'monospace' }}>{iesConsent.consentId}</strong>
+              </p>
+            </div>
+            {iesConsentError && (
+              <p style={{ margin: '0 0 10px', fontSize: 12, color: '#b91c1c', fontWeight: 700 }}>{iesConsentError}</p>
+            )}
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button
+                onClick={() => handleIesConsentDecision('approve')}
+                disabled={iesConsentBusy}
+                style={{ flex: 1, padding: '12px 14px', borderRadius: 12, fontSize: 13, background: 'linear-gradient(135deg,#f59e0b,#ea580c)', color: '#fff', border: 'none', fontWeight: 800, cursor: 'pointer', opacity: iesConsentBusy ? 0.7 : 1 }}
+              >
+                {iesConsentBusy ? 'Submitting...' : 'Accept ✅'}
+              </button>
+              <button
+                onClick={() => handleIesConsentDecision('reject')}
+                disabled={iesConsentBusy}
+                style={{ flex: 1, padding: '12px 14px', borderRadius: 12, fontSize: 13, background: '#fff1f2', color: '#be123c', border: '1px solid #fda4af', fontWeight: 800, cursor: 'pointer', opacity: iesConsentBusy ? 0.7 : 1 }}
+              >
+                Decline ❌
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

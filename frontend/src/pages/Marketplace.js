@@ -78,6 +78,7 @@ export default function Marketplace() {
   const [viewMode, setViewMode] = useState('all');
   const [filter, setFilter] = useState('all');
   const [showSuccess, setShowSuccess] = useState(false);
+  const [successMessage, setSuccessMessage] = useState('');
   const [showListModal, setShowListModal] = useState(false);
   const [listings, setListings] = useState([]);
   const [myListings, setMyListings] = useState([]);
@@ -89,15 +90,117 @@ export default function Marketplace() {
   const [buyUnits, setBuyUnits] = useState('');
   const [buyLoading, setBuyLoading] = useState(false);
   const [buyResult, setBuyResult] = useState(null); // { status, message }
+  const [tradeLogs, setTradeLogs] = useState([]);
+  const [activeTradeId, setActiveTradeId] = useState(null);
+  const [tradePhase, setTradePhase] = useState('idle');
+  const [tradeReceipt, setTradeReceipt] = useState(null);
+  const [pendingConsent, setPendingConsent] = useState(null);
   const [walletBalance, setWalletBalance] = useState(0);
 
   useEffect(() => { fetchListings(); }, []);
 
   useEffect(() => {
+    const socket = window.__socket;
+    if (!socket) return;
+
+    const onListingChanged = () => {
+      fetchListings();
+    };
+
+    socket.on('listing:changed', onListingChanged);
+    return () => {
+      socket.off('listing:changed', onListingChanged);
+    };
+  }, []);
+
+  useEffect(() => {
     if (location.state?.openListModal) {
       setShowListModal(true);
+      const units = Number(location.state?.prefillUnits || 0);
+      if (units > 0) {
+        setListingForm((prev) => ({
+          ...prev,
+          units: units.toFixed(2)
+        }));
+      }
     }
   }, [location.state]);
+
+  useEffect(() => {
+    const socket = window.__socket;
+    if (!socket) return;
+
+    const appendLogs = (incoming) => {
+      if (!Array.isArray(incoming) || incoming.length === 0) return;
+      setTradeLogs((prev) => {
+        const seen = new Set(prev.map((l) => `${l.time}|${l.event}`));
+        const next = [...prev];
+        incoming.forEach((l) => {
+          const key = `${l.time}|${l.event}`;
+          if (!seen.has(key)) {
+            seen.add(key);
+            next.push(l);
+          }
+        });
+        return next;
+      });
+    };
+
+    const onLog = (payload) => {
+      if (!activeTradeId || payload?.tradeId !== activeTradeId) return;
+      appendLogs(payload.logs || []);
+    };
+
+    const onTradeUpdate = (payload) => {
+      if (!activeTradeId || payload?.tradeId !== activeTradeId) return;
+      const status = payload?.status;
+      if (status === 'consent_approved') setTradePhase('verifying');
+      else if (status === 'discom_verified') setTradePhase('settling');
+      else if (status === 'consent_rejected') {
+        setTradePhase('failed');
+        setBuyResult({ status: 'err', message: 'Seller rejected consent. Trade cancelled.' });
+      }
+    };
+
+    const onConsentRequest = (payload) => {
+      if (!payload?.consentId) return;
+      if (!activeTradeId) setActiveTradeId(payload.tradeId);
+      setPendingConsent(payload);
+      setTradePhase('awaiting_my_consent');
+      setTradeLogs((prev) => [
+        ...prev,
+        {
+          time: new Date().toISOString(),
+          level: 'warning',
+          event: `[IES] Consent request received for trade ${payload.tradeId}.`,
+        },
+      ]);
+    };
+
+    const onSettlement = (payload) => {
+      if (!activeTradeId || payload?.tradeId !== activeTradeId) return;
+      setTradeReceipt(payload);
+      setTradePhase('settled');
+      setBuyLoading(false);
+      setBuyResult({ status: 'ok', message: 'IES trade settled successfully.' });
+      setSuccessMessage('IES settlement completed with live DISCOM verification.');
+      setShowSuccess(true);
+      setTimeout(() => setShowSuccess(false), 5000);
+      fetchListings();
+    };
+
+    socket.on('ies:log', onLog);
+    socket.on('ies:trade_update', onTradeUpdate);
+    socket.on('ies:consent_request', onConsentRequest);
+    socket.on('ies:settlement', onSettlement);
+
+    return () => {
+      socket.off('ies:log', onLog);
+      socket.off('ies:trade_update', onTradeUpdate);
+      socket.off('ies:consent_request', onConsentRequest);
+      socket.off('ies:settlement', onSettlement);
+    };
+  }, [activeTradeId]);
 
   const getCurrentUserId = () => {
     try {
@@ -192,7 +295,23 @@ export default function Marketplace() {
 
       const res = await api.createListing(payload);
 
-      if (res.success) { setShowListModal(false); setListingForm({ units: '', pricePerUnit: '' }); setDone(true); setTimeout(() => setDone(false), 3000); fetchListings(); }
+      if (res.success) {
+        setShowListModal(false);
+        setListingForm({ units: '', pricePerUnit: '' });
+        setDone(true);
+        setTimeout(() => setDone(false), 3000);
+        fetchListings();
+
+        // 🔌 Seed smart meter as prosumer so live telemetry shows solar surplus
+        const user = JSON.parse(localStorage.getItem('user') || '{}');
+        if (user?._id && window.__socket) {
+          window.__socket.emit('meter:setProsumer', {
+            userId: user._id,
+            generationKw: Math.max(8, parseFloat(listingForm.units) * 1.5) || 8,
+            consumptionKw: 3,
+          });
+        }
+      }
       else setError(res.message);
     } catch { setError('Error creating listing'); }
   };
@@ -201,28 +320,69 @@ export default function Marketplace() {
     setBuyModal(listing);
     setBuyUnits('');
     setBuyResult(null);
+    setTradeLogs([]);
+    setActiveTradeId(null);
+    setTradePhase('idle');
+    setTradeReceipt(null);
+    setPendingConsent(null);
     loadWalletFromProfile();
   };
 
   const handleRequestTransaction = async () => {
     if (!buyModal || !buyUnits || parseFloat(buyUnits) <= 0) return;
     setBuyLoading(true);
+    setBuyResult(null);
+    setTradeLogs([]);
+    setTradeReceipt(null);
+    setPendingConsent(null);
+    setTradePhase('initiating');
     try {
-      const res = await api.requestTransaction(buyModal._id, parseFloat(buyUnits));
+      const res = await api.initiateIESTrade(buyModal._id, parseFloat(buyUnits));
       if (res.success) {
-        setBuyResult({ status: 'ok', message: 'Order placed! Waiting for seller to confirm.' });
-        await fetchListings();
-        setTimeout(() => {
-          setBuyModal(null);
-          setBuyResult(null);
-          setShowSuccess(true);
-          setTimeout(() => setShowSuccess(false), 4000);
-        }, 2200);
+        setActiveTradeId(res.tradeId);
+        setTradePhase('awaiting_consent');
+        setBuyResult({ status: 'ok', message: 'Trade initiated. Waiting for consent and DISCOM verification...' });
+        setTradeLogs([
+          { time: new Date().toISOString(), level: 'info', event: `[IES] Trade started (${res.tradeId})` },
+          { time: new Date().toISOString(), level: 'info', event: `[IES] Requesting seller consent for ${buyUnits} kWh...` },
+        ]);
       } else {
+        setTradePhase('failed');
         setBuyResult({ status: 'err', message: mapTxErrorMessage(res) });
       }
     } catch (err) {
+      setTradePhase('failed');
       setBuyResult({ status: 'err', message: mapTxErrorMessage(err?.response?.data || { error: 'Network or server error' }) });
+    } finally {
+      setBuyLoading(false);
+    }
+  };
+
+  const handleConsentDecision = async (decision) => {
+    if (!pendingConsent?.consentId) return;
+    setBuyLoading(true);
+    try {
+      const res = await api.approveConsent(pendingConsent.consentId, decision);
+      if (res?.success) {
+        setTradePhase(decision === 'approve' ? 'verifying' : 'failed');
+        setPendingConsent(null);
+        setTradeLogs((prev) => [
+          ...prev,
+          {
+            time: new Date().toISOString(),
+            level: decision === 'approve' ? 'success' : 'warning',
+            event: decision === 'approve'
+              ? '[IES] Seller approved consent. Waiting for DISCOM verification...'
+              : '[IES] Seller rejected consent. Trade cancelled.',
+          },
+        ]);
+      } else {
+        setTradePhase('failed');
+        setBuyResult({ status: 'err', message: res?.message || 'Unable to process consent decision.' });
+      }
+    } catch (err) {
+      setTradePhase('failed');
+      setBuyResult({ status: 'err', message: err?.response?.data?.message || 'Consent approval failed.' });
     } finally {
       setBuyLoading(false);
     }
@@ -230,9 +390,6 @@ export default function Marketplace() {
 
   const handleDeleteListing = async (listingId) => {
     try {
-      const confirmed = window.confirm('Remove this listing?');
-      if (!confirmed) return;
-
       const res = await api.deleteListing(listingId);
       if (res.success) {
         setDone(true);
@@ -299,7 +456,7 @@ export default function Marketplace() {
         )}
         {showSuccess && (
           <div className="um-card" style={{ background: 'rgba(220,252,231,0.85)', border: '1px solid #86efac', color: '#15803d', borderRadius: 16, padding: '16px 20px', marginBottom: 20, display: 'flex', alignItems: 'center', gap: 12, animation: 'fadeUp 0.4s cubic-bezier(0.16, 1, 0.3, 1)' }}>
-            <span style={{ fontSize: 20 }}>⚡</span> <strong>Order placed!</strong> Waiting for seller to confirm — check Transactions for status.
+            <span style={{ fontSize: 20 }}>⚡</span> <strong>{successMessage || 'Trade completed!'}</strong>
           </div>
         )}
         {error && (
@@ -481,7 +638,7 @@ export default function Marketplace() {
           <div style={{ background: 'rgba(255,253,245,0.97)', borderRadius: '32px 32px 0 0', padding: '32px 32px 48px', width: '100%', maxWidth: 540, boxShadow: '0 -24px 80px rgba(180,130,0,0.2), 0 0 0 1px rgba(255,255,255,0.8)', animation: 'slideUp 0.5s cubic-bezier(0.16, 1, 0.3, 1)', position: 'relative' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
               <div>
-                <h2 style={{ margin: '0 0 4px', fontSize: 22, fontWeight: 900, color: '#451a03', letterSpacing: -0.5 }}>⚡ Request Energy</h2>
+                <h2 style={{ margin: '0 0 4px', fontSize: 22, fontWeight: 900, color: '#451a03', letterSpacing: -0.5 }}>⚡ Buy With Live IES Flow</h2>
                 <p style={{ margin: 0, fontSize: 13, color: '#92400e', fontWeight: 500 }}>From <strong>{buyModal.seller?.name || 'Seller'}</strong> · ₹{buyModal.pricePerUnit}/kWh · {buyModal.units} kWh available</p>
               </div>
               <button onClick={() => setBuyModal(null)} style={{ background: '#fef9c3', border: '1px solid #fde68a', borderRadius: '50%', width: 36, height: 36, cursor: 'pointer', fontSize: 14, color: '#92400e', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
@@ -493,11 +650,10 @@ export default function Marketplace() {
               <span style={{ fontSize: 16, fontWeight: 900, color: walletBalance > 0 ? '#15803d' : '#b91c1c', letterSpacing: -0.5 }}>₹{walletBalance}</span>
             </div>
 
-            {buyResult ? (
+            {buyResult && tradePhase === 'failed' ? (
               <div style={{ textAlign: 'center', padding: '24px 0' }}>
                 <div style={{ fontSize: 48, marginBottom: 12 }}>{buyResult.status === 'ok' ? '✅' : '❌'}</div>
                 <p style={{ fontWeight: 800, fontSize: 16, color: buyResult.status === 'ok' ? '#15803d' : '#b91c1c', margin: 0 }}>{buyResult.message}</p>
-                {buyResult.status === 'ok' && <p style={{ margin: '8px 0 0', fontSize: 13, color: '#92400e' }}>You'll see the status update in Transactions.</p>}
                 {buyResult.status === 'err' && (
                   <button onClick={() => setBuyResult(null)} style={{ marginTop: 14, background: '#fff7ed', border: '1px solid #fdba74', color: '#9a3412', borderRadius: 10, padding: '8px 14px', cursor: 'pointer', fontWeight: 700, fontSize: 12 }}>
                     Try Again
@@ -506,6 +662,8 @@ export default function Marketplace() {
               </div>
             ) : (
               <>
+                {!activeTradeId && (
+                <>
                 <div style={{ marginBottom: 16 }}>
                   <label style={{ fontSize: 11, fontWeight: 800, color: '#a16207', display: 'block', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>Units to request (kWh)</label>
                   <input type="number" placeholder={`Max ${buyModal.units} kWh`} max={buyModal.units} min={0.1} step={0.1} value={buyUnits} onChange={e => setBuyUnits(e.target.value)} className="premium-input" />
@@ -536,18 +694,57 @@ export default function Marketplace() {
 
                 <div style={{ background: '#fffbeb', border: '1px solid #fde047', borderRadius: 14, padding: '12px 16px', marginBottom: 24 }}>
                   <p style={{ margin: 0, fontSize: 12, color: '#92400e', display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span>⏱</span> Seller has <strong>10 minutes</strong> to accept. Funds auto-refunded if they don't respond.
+                    <span>⏱</span> IES will run consent, DISCOM verification, and settlement in real time after you initiate.
                   </p>
                 </div>
+                </>
+                )}
+
+                {activeTradeId && (
+                  <div style={{ marginBottom: 18 }}>
+                    <div style={{ background: '#0b1220', border: '1px solid #1f2937', borderRadius: 14, padding: 14, marginBottom: 10 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                        <span style={{ fontSize: 11, color: '#9ca3af', fontWeight: 700, letterSpacing: 0.6 }}>LIVE IES CONSOLE</span>
+                        <span style={{ fontSize: 11, color: '#34d399', fontFamily: 'monospace' }}>{tradePhase.replaceAll('_', ' ').toUpperCase()}</span>
+                      </div>
+                      <div style={{ maxHeight: 170, overflowY: 'auto', borderTop: '1px solid #1f2937', paddingTop: 8 }}>
+                        {tradeLogs.length === 0 ? (
+                          <p style={{ margin: 0, fontSize: 12, color: '#6b7280', fontFamily: 'monospace' }}>Waiting for IES events...</p>
+                        ) : tradeLogs.map((log, idx) => (
+                          <p key={`${log.time}-${idx}`} style={{ margin: '0 0 5px', fontSize: 11, color: log.level === 'error' ? '#fca5a5' : log.level === 'warning' ? '#fcd34d' : log.level === 'success' ? '#86efac' : '#cbd5e1', fontFamily: 'monospace' }}>
+                            [{new Date(log.time).toLocaleTimeString()}] {log.event}
+                          </p>
+                        ))}
+                      </div>
+                    </div>
+
+                    {pendingConsent && (
+                      <div style={{ background: '#eff6ff', border: '1px solid #93c5fd', borderRadius: 12, padding: '12px 14px', marginBottom: 10 }}>
+                        <p style={{ margin: '0 0 8px', fontSize: 12, color: '#1d4ed8', fontWeight: 800 }}>Consent required for this trade.</p>
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          <button onClick={() => handleConsentDecision('approve')} className="gradient-btn" style={{ flex: 1, padding: '10px 12px', borderRadius: 10, fontSize: 12 }}>Approve Consent</button>
+                          <button onClick={() => handleConsentDecision('reject')} style={{ flex: 1, padding: '10px 12px', borderRadius: 10, fontSize: 12, background: '#fff1f2', color: '#be123c', border: '1px solid #fda4af', fontWeight: 800, cursor: 'pointer' }}>Reject</button>
+                        </div>
+                      </div>
+                    )}
+
+                    {tradeReceipt && (
+                      <div style={{ background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 12, padding: '12px 14px' }}>
+                        <p style={{ margin: '0 0 6px', fontSize: 12, color: '#15803d', fontWeight: 800 }}>Settlement Complete ✅</p>
+                        <p style={{ margin: 0, fontSize: 12, color: '#166534' }}>Txn Hash: <strong style={{ fontFamily: 'monospace' }}>{tradeReceipt.txnHash}</strong></p>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 <div style={{ display: 'flex', gap: 12 }}>
                   <button onClick={() => setBuyModal(null)} style={{ flex: 1, padding: '16px', background: 'rgba(253,230,138,0.3)', color: '#92400e', border: '1px solid rgba(253,230,138,0.8)', borderRadius: 16, fontWeight: 800, fontSize: 15, cursor: 'pointer', fontFamily: 'inherit' }}>Cancel</button>
                   <button
                     onClick={handleRequestTransaction}
-                    disabled={buyLoading || !buyUnits || parseFloat(buyUnits) <= 0 || parseFloat(buyUnits) > buyModal.units || walletBalance < parseFloat(buyUnits) * buyModal.pricePerUnit}
+                    disabled={buyLoading || activeTradeId || !buyUnits || parseFloat(buyUnits) <= 0 || parseFloat(buyUnits) > buyModal.units || walletBalance < parseFloat(buyUnits) * buyModal.pricePerUnit}
                     className="gradient-btn"
-                    style={{ flex: 2, padding: '16px', borderRadius: 16, fontSize: 15, opacity: (!buyUnits || parseFloat(buyUnits) <= 0 || parseFloat(buyUnits) > buyModal.units || walletBalance < parseFloat(buyUnits) * buyModal.pricePerUnit) ? 0.5 : 1 }}>
-                    {buyLoading ? 'Placing…' : 'Confirm Request ⚡'}
+                    style={{ flex: 2, padding: '16px', borderRadius: 16, fontSize: 15, opacity: (activeTradeId || !buyUnits || parseFloat(buyUnits) <= 0 || parseFloat(buyUnits) > buyModal.units || walletBalance < parseFloat(buyUnits) * buyModal.pricePerUnit) ? 0.5 : 1 }}>
+                    {buyLoading ? 'Starting IES Flow…' : activeTradeId ? 'IES Flow Running…' : 'Initiate IES Trade ⚡'}
                   </button>
                 </div>
               </>
@@ -556,6 +753,41 @@ export default function Marketplace() {
           </div>
         )
       }
-    </div >
+
+      {/* GLOBAL CONSENT POPUP FOR SELLER (works even without opening buy modal) */}
+      {pendingConsent && !buyModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 70, backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)' }}>
+          <div style={{ width: 'min(92vw, 480px)', background: '#fffef8', border: '1px solid #fde68a', borderRadius: 18, boxShadow: '0 20px 60px rgba(120,53,15,0.25)', padding: 22 }}>
+            <h3 style={{ margin: '0 0 6px', fontSize: 20, color: '#7c2d12', fontWeight: 900 }}>🔐 IES Consent Required</h3>
+            <p style={{ margin: '0 0 14px', color: '#92400e', fontSize: 13, lineHeight: 1.5 }}>
+              A buyer initiated a trade. Approve or decline to continue DEPA consent verification.
+            </p>
+            <div style={{ background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 12, padding: '10px 12px', marginBottom: 14 }}>
+              <p style={{ margin: '0 0 4px', fontSize: 12, color: '#92400e' }}>
+                Trade: <strong style={{ fontFamily: 'monospace' }}>{pendingConsent.tradeId}</strong>
+              </p>
+              <p style={{ margin: 0, fontSize: 12, color: '#92400e' }}>
+                Units requested: <strong>{pendingConsent.units} kWh</strong>
+              </p>
+            </div>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button
+                onClick={() => handleConsentDecision('approve')}
+                className="gradient-btn"
+                style={{ flex: 1, padding: '12px 14px', borderRadius: 12, fontSize: 13 }}
+              >
+                Accept ✅
+              </button>
+              <button
+                onClick={() => handleConsentDecision('reject')}
+                style={{ flex: 1, padding: '12px 14px', borderRadius: 12, fontSize: 13, background: '#fff1f2', color: '#be123c', border: '1px solid #fda4af', fontWeight: 800, cursor: 'pointer' }}
+              >
+                Decline ❌
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

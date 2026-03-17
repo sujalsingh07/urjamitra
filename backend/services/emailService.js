@@ -1,114 +1,81 @@
 const nodemailer = require("nodemailer");
 
-// Create a transporter using Gmail
-const transporter = nodemailer.createTransport({
-  service: "gmail",
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASSWORD,
-  },
-  connectionTimeout: 5000,
-  socketTimeout: 5000,
-});
-
-// Generate a random 6-digit OTP
-const generateOTP = () => {
-  return Math.floor(100000 + Math.random() * 900000).toString();
+// Build a fresh transporter each call so .env is always current
+const makeTransport = () => {
+  const user = (process.env.EMAIL_USER || "").trim();
+  const pass = (process.env.EMAIL_PASSWORD || "").replace(/\s+/g, "").trim();
+  if (!user || !pass) return null;
+  return nodemailer.createTransport({
+    host: "smtp.gmail.com",
+    port: 587,
+    secure: false,
+    auth: { user, pass },
+  });
 };
 
-// Send OTP email (non-blocking with timeout)
+const generateOTP = () =>
+  Math.floor(100000 + Math.random() * 900000).toString();
+
 const sendOTPEmail = async (email, otp) => {
-  const mailOptions = {
-    from: process.env.EMAIL_USER,
-    to: email,
-    subject: "Your Urjamitra OTP for Email Verification",
-    html: `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <div style="background-color: #4CAF50; color: white; padding: 20px; text-align: center; border-radius: 5px;">
-          <h1>Urjamitra</h1>
-          <p>Email Verification</p>
-        </div>
-        
-        <div style="padding: 20px; background-color: #f9f9f9;">
-          <p>Hello,</p>
-          <p>You requested to verify your email address. Please use the following OTP to complete your verification:</p>
-          
-          <div style="background-color: #4CAF50; color: white; padding: 15px; text-align: center; font-size: 32px; font-weight: bold; letter-spacing: 5px; border-radius: 5px; margin: 20px 0;">
-            ${otp}
+  const transport = makeTransport();
+  if (!transport) {
+    console.error("❌ EMAIL_USER / EMAIL_PASSWORD missing in .env");
+    return false;
+  }
+  try {
+    const from = (process.env.EMAIL_USER || "").trim();
+    await transport.sendMail({
+      from,
+      to: email,
+      subject: "Your Urjamitra OTP",
+      html: `
+        <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto">
+          <div style="background:#f59e0b;color:#fff;padding:20px;text-align:center;border-radius:8px 8px 0 0">
+            <h2 style="margin:0">☀️ Urjamitra — Email Verification</h2>
           </div>
-          
-          <p><strong>Important:</strong> This OTP will expire in 10 minutes.</p>
-          <p>If you did not request this OTP, please ignore this email.</p>
-          
-          <hr style="border: none; border-top: 1px solid #ddd; margin: 20px 0;">
-          <p style="color: #666; font-size: 12px;">
-            This is an automated message from Urjamitra. Please do not reply to this email.
-          </p>
-        </div>
-      </div>
-    `,
-  };
-
-  try {
-    await transporter.sendMail(mailOptions);
-    console.log(`✅ OTP sent successfully to ${email}`);
+          <div style="padding:28px;background:#fffdf5;border:1px solid #fde68a;border-top:none;border-radius:0 0 8px 8px">
+            <p style="margin:0 0 16px;color:#451a03">Use the code below to complete your sign-up:</p>
+            <div style="background:#451a03;color:#fef08a;font-size:36px;font-weight:900;letter-spacing:10px;text-align:center;padding:20px;border-radius:8px;margin:0 0 20px">
+              ${otp}
+            </div>
+            <p style="margin:0;color:#92400e;font-size:13px">Expires in <strong>10 minutes</strong>. If you didn't request this, ignore this email.</p>
+          </div>
+        </div>`,
+    });
+    console.log(`✅ OTP email sent → ${email}`);
     return true;
-  } catch (error) {
-    console.error("❌ Error sending OTP email:", error);
+  } catch (err) {
+    console.error("❌ OTP email error:", err.message);
     return false;
   }
 };
 
-// Send welcome email after successful verification
 const sendWelcomeEmail = async (email, userName) => {
-  const mailOptions = {
-    from: process.env.EMAIL_USER,
-    to: email,
-    subject: "Welcome to Urjamitra!",
-    html: `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <div style="background-color: #4CAF50; color: white; padding: 20px; text-align: center; border-radius: 5px;">
-          <h1>Urjamitra</h1>
-          <p>Welcome to Our Community!</p>
-        </div>
-        
-        <div style="padding: 20px; background-color: #f9f9f9;">
-          <p>Hello ${userName},</p>
-          <p>Welcome to Urjamitra! Your email has been successfully verified.</p>
-          <p>You can now access all features of our platform including:</p>
-          <ul>
-            <li>Browse campus marketplace</li>
-            <li>Create listings</li>
-            <li>Connect with other users</li>
-            <li>Send and receive messages</li>
-          </ul>
-          
-          <p style="color: #666;">
-            If you have any questions, feel free to contact our support team.
-          </p>
-          
-          <hr style="border: none; border-top: 1px solid #ddd; margin: 20px 0;">
-          <p style="color: #666; font-size: 12px;">
-            Best regards,<br>
-            The Urjamitra Team
-          </p>
-        </div>
-      </div>
-    `,
-  };
-
+  const transport = makeTransport();
+  if (!transport) return false;
   try {
-    await transporter.sendMail(mailOptions);
-    console.log(`✅ Welcome email sent to ${email}`);
+    const from = (process.env.EMAIL_USER || "").trim();
+    await transport.sendMail({
+      from,
+      to: email,
+      subject: "Welcome to Urjamitra! ⚡",
+      html: `
+        <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto">
+          <div style="background:#f59e0b;color:#fff;padding:20px;text-align:center;border-radius:8px 8px 0 0">
+            <h2 style="margin:0">☀️ Welcome to Urjamitra, ${userName}!</h2>
+          </div>
+          <div style="padding:28px;background:#fffdf5;border:1px solid #fde68a;border-top:none;border-radius:0 0 8px 8px">
+            <p style="color:#451a03">Your account is ready. Start sharing solar energy with your community!</p>
+            <p style="color:#92400e;font-size:13px;margin:0">— The Urjamitra Team</p>
+          </div>
+        </div>`,
+    });
+    console.log(`✅ Welcome email sent → ${email}`);
     return true;
-  } catch (error) {
-    console.error("❌ Error sending welcome email:", error);
+  } catch (err) {
+    console.error("❌ Welcome email error:", err.message);
     return false;
   }
 };
 
-module.exports = {
-  generateOTP,
-  sendOTPEmail,
-  sendWelcomeEmail,
-};
+module.exports = { generateOTP, sendOTPEmail, sendWelcomeEmail };

@@ -8,12 +8,14 @@ const createToken = (id) => {
 };
 
 const serializeUser = (user) => ({
-  id: user._id,
-  name: user.name,
-  email: user.email,
-  mobile: user.mobile,
+  _id:     user._id,          // keep _id for socket.emit('register', user._id)
+  id:      user._id,          // keep id for backwards compat
+  name:    user.name,
+  email:   user.email,
+  mobile:  user.mobile,
   address: user.address,
   location: user.location,
+  wallet:  user.wallet,       // needed for dashboard balance display
 });
 
 exports.signup = async (req, res) => {
@@ -56,142 +58,108 @@ exports.login = async (req, res) => {
 };
 
 // Request OTP for email verification
+// ── Step 1: Request OTP ──────────────────────────────────────────────────────
 exports.requestOTP = async (req, res) => {
   try {
-    const { email } = req.body;
-
-    if (!email) {
-      return res.status(400).json({ success: false, message: 'Please provide an email address' });
+    const email = String(req.body.email || '').trim().toLowerCase();
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({ success: false, message: 'Enter a valid email address.' });
     }
-
-    // Check if user already exists
-    const existingUser = await User.findOne({ email });
-    if (existingUser) {
+    if (await User.findOne({ email })) {
       return res.status(400).json({ success: false, message: 'Email already registered. Please login.' });
     }
 
-    // Generate OTP
     const otp = generateOTP();
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+    await OTP.deleteMany({ email });
+    await OTP.create({ email, otp, expiresAt: new Date(Date.now() + 10 * 60 * 1000) });
+    console.log(`📧 OTP for ${email}: ${otp}`);
 
-    // Delete previous OTP if exists
-    await OTP.deleteOne({ email });
+    const emailDelivered = await sendOTPEmail(email, otp);
 
-    // Save OTP to database
-    const otpRecord = await OTP.create({
-      email,
-      otp,
-      expiresAt,
-    });
-
-    // Log OTP for testing/debugging
-    console.log(`📧 OTP Generated for ${email}: ${otp}`);
-
-    // Send OTP email (non-blocking)
-    sendOTPEmail(email, otp).catch(err => console.error(`Failed to send email to ${email}:`, err));
-
-    // Send response immediately 
-    res.status(200).json({
+    res.json({
       success: true,
-      message: 'OTP sent to your email. For testing, check backend logs.',
-      email,
-      testOTP: otp // Only for development/testing
+      message: emailDelivered ? `OTP sent to ${email}` : 'OTP generated (email failed - see code below)',
+      emailDelivered,
+      otp: process.env.NODE_ENV !== 'production' ? otp : undefined,
     });
-
-  } catch (error) {
-    console.error('Error requesting OTP:', error);
-    res.status(500).json({ success: false, message: error.message });
+  } catch (err) {
+    console.error('requestOTP error:', err);
+    res.status(500).json({ success: false, message: err.message });
   }
 };
 
-// Verify OTP
+// ── Step 2: Verify OTP ───────────────────────────────────────────────────────
 exports.verifyOTP = async (req, res) => {
   try {
-    const { email, otp } = req.body;
+    const email = String(req.body.email || '').trim().toLowerCase();
+    const otp   = String(req.body.otp   || '').replace(/\D/g, '').trim();
 
-    if (!email || !otp) {
-      return res.status(400).json({ success: false, message: 'Please provide email and OTP' });
+    if (!email || otp.length !== 6) {
+      return res.status(400).json({ success: false, message: 'Provide email and 6-digit OTP.' });
     }
 
-    // Find OTP record
-    const otpRecord = await OTP.findOne({ email });
-
-    if (!otpRecord) {
-      return res.status(400).json({ success: false, message: 'OTP not found. Please request a new one.' });
+    const record = await OTP.findOne({ email }).sort({ createdAt: -1 });
+    if (!record) {
+      return res.status(400).json({ success: false, message: 'No OTP found. Please request one.' });
     }
-
-    // Check if OTP expired
-    if (new Date() > otpRecord.expiresAt) {
-      await OTP.deleteOne({ email });
-      return res.status(400).json({ success: false, message: 'OTP has expired. Please request a new one.' });
+    if (Date.now() > record.expiresAt.getTime()) {
+      await OTP.deleteMany({ email });
+      return res.status(400).json({ success: false, message: 'OTP expired. Request a new one.' });
     }
-
-    // Check if OTP is correct
-    if (otpRecord.otp !== otp) {
-      otpRecord.attempts += 1;
-      if (otpRecord.attempts >= 5) {
-        await OTP.deleteOne({ email });
-        return res.status(400).json({ success: false, message: 'Too many failed attempts. Please request a new OTP.' });
+    if (record.otp !== otp) {
+      record.attempts = (record.attempts || 0) + 1;
+      if (record.attempts >= 5) {
+        await OTP.deleteMany({ email });
+        return res.status(400).json({ success: false, message: 'Too many attempts. Request a new OTP.' });
       }
-      await otpRecord.save();
-      return res.status(400).json({ success: false, message: 'Incorrect OTP. Please try again.' });
+      await record.save();
+      const left = 5 - record.attempts;
+      return res.status(400).json({ success: false, message: `Incorrect OTP. ${left} attempt${left !== 1 ? 's' : ''} left.` });
     }
 
-    // Mark OTP as verified
-    otpRecord.verified = true;
-    await otpRecord.save();
-
-    res.status(200).json({
-      success: true,
-      message: 'OTP verified successfully. You can now complete your signup.',
-      email,
-    });
-  } catch (error) {
-    console.error('Error verifying OTP:', error);
-    res.status(500).json({ success: false, message: error.message });
+    record.verified = true;
+    await record.save();
+    res.json({ success: true, message: 'Email verified.' });
+  } catch (err) {
+    console.error('verifyOTP error:', err);
+    res.status(500).json({ success: false, message: err.message });
   }
 };
 
-// Signup with OTP verification
+// ── Step 3: Complete Signup ──────────────────────────────────────────────────
 exports.signupWithOTP = async (req, res) => {
   try {
-    const { name, email, password, address } = req.body;
+    const email    = String(req.body.email    || '').trim().toLowerCase();
+    const name     = String(req.body.name     || '').trim();
+    const password = String(req.body.password || '');
 
-    if (!name || !email || !password || !address) {
-      return res.status(400).json({ success: false, message: 'Please fill in all fields' });
+    if (!name || !email || !password) {
+      return res.status(400).json({ success: false, message: 'Name, email and password are required.' });
+    }
+    if (password.length < 6) {
+      return res.status(400).json({ success: false, message: 'Password must be at least 6 characters.' });
     }
 
-    // Verify that OTP has been verified
-    const otpRecord = await OTP.findOne({ email, verified: true });
-
-    if (!otpRecord) {
-      return res.status(400).json({ success: false, message: 'Please verify your email with OTP first.' });
+    const record = await OTP.findOne({ email, verified: true }).sort({ createdAt: -1 });
+    if (!record) {
+      return res.status(400).json({ success: false, message: 'Email not verified. Complete the OTP step first.' });
+    }
+    if (Date.now() > record.expiresAt.getTime()) {
+      await OTP.deleteMany({ email });
+      return res.status(400).json({ success: false, message: 'Session expired. Start signup again.' });
+    }
+    if (await User.findOne({ email })) {
+      return res.status(400).json({ success: false, message: 'Account already exists. Please login.' });
     }
 
-    // Check if user already exists
-    const existingUser = await User.findOne({ email });
-    if (existingUser) {
-      return res.status(400).json({ success: false, message: 'Email already registered. Please login.' });
-    }
-
-    // Create user
-    const user = await User.create({ name, email, password, address });
-
-    // Send welcome email
-    await sendWelcomeEmail(email, name);
-
-    // Delete OTP record after successful signup
-    await OTP.deleteOne({ email });
+    const user = await User.create({ name, email, password, address: 'Campus' });
+    await OTP.deleteMany({ email });
+    sendWelcomeEmail(email, name).catch(() => {});
 
     const token = createToken(user._id);
-    res.status(201).json({
-      success: true,
-      token,
-      user: serializeUser(user),
-      message: 'Signup successful! Welcome to Urjamitra.',
-    });
-  } catch (error) {
-    console.error('Error during signup with OTP:', error);
-    res.status(500).json({ success: false, message: error.message });
+    res.status(201).json({ success: true, token, user: serializeUser(user) });
+  } catch (err) {
+    console.error('signupWithOTP error:', err);
+    res.status(500).json({ success: false, message: err.message });
   }
 };

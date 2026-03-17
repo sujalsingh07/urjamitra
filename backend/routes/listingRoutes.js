@@ -16,6 +16,36 @@ const authenticateToken = (req, res, next) => {
   });
 };
 
+const normalizeAddressPart = (value) =>
+  String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const getCityAndArea = (address) => {
+  const parts = String(address || '')
+    .split(',')
+    .map((p) => normalizeAddressPart(p))
+    .filter(Boolean);
+
+  return {
+    area: parts[0] || '',
+    city: parts[parts.length - 1] || '',
+  };
+};
+
+const isSameCityOrArea = (userAddress, listingAddress) => {
+  const user = getCityAndArea(userAddress);
+  const listing = getCityAndArea(listingAddress);
+
+  if (!user.city && !user.area) return false;
+  if (!listing.city && !listing.area) return false;
+
+  return (user.city && listing.city && user.city === listing.city) ||
+    (user.area && listing.area && user.area === listing.area);
+};
+
 // Create a new listing
 router.post('/create', authenticateToken, async (req, res) => {
   try {
@@ -36,15 +66,29 @@ router.post('/create', authenticateToken, async (req, res) => {
     // Add listing to user's listings
     await User.findByIdAndUpdate(req.userId, { $push: { listings: listing._id } });
 
+    const io = req.app.get('io');
+    if (io) {
+      io.emit('listing:changed', { type: 'created', listingId: String(listing._id) });
+    }
+
     res.status(201).json({ success: true, listing });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
 });
 
-// Get all available listings
-router.get('/all', async (req, res) => {
+// Get all available listings in the user's city/area
+router.get('/all', authenticateToken, async (req, res) => {
   try {
+    const currentUser = await User.findById(req.userId).select('address');
+    if (!currentUser?.address) {
+      return res.json({
+        success: true,
+        listings: [],
+        message: 'Please add your address in profile to view local listings.'
+      });
+    }
+
     const listings = await Listing.find({
       available: true,
       $or: [
@@ -55,8 +99,12 @@ router.get('/all', async (req, res) => {
     })
       .populate('seller', 'name email address rating reviewCount')
       .sort({ createdAt: -1 });
+
+    const localListings = listings.filter((listing) =>
+      isSameCityOrArea(currentUser.address, listing?.location?.address || listing?.seller?.address)
+    );
     
-    res.json({ success: true, listings });
+    res.json({ success: true, listings: localListings });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -110,6 +158,11 @@ router.put('/:listingId', authenticateToken, async (req, res) => {
       { new: true }
     );
 
+    const io = req.app.get('io');
+    if (io) {
+      io.emit('listing:changed', { type: 'updated', listingId: String(updated._id) });
+    }
+
     res.json({ success: true, listing: updated });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -131,6 +184,11 @@ router.delete('/:listingId', authenticateToken, async (req, res) => {
 
     await Listing.findByIdAndDelete(req.params.listingId);
     await User.findByIdAndUpdate(req.userId, { $pull: { listings: req.params.listingId } });
+
+    const io = req.app.get('io');
+    if (io) {
+      io.emit('listing:changed', { type: 'deleted', listingId: String(req.params.listingId) });
+    }
 
     res.json({ success: true, message: 'Listing deleted successfully' });
   } catch (error) {

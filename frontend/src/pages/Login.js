@@ -59,6 +59,67 @@ const CSS = `
   .gradient-btn:hover:not(:disabled)::after { animation: shine 0.7s cubic-bezier(0.16, 1, 0.3, 1); }
   .gradient-btn:active:not(:disabled) { transform: translateY(0) scale(0.98); }
   .gradient-btn:disabled { background: #fef3c7; color: #d97706; cursor: not-allowed; box-shadow: none; }
+
+  @keyframes demoPulse { 0%,100%{box-shadow:0 0 0 0 rgba(34,197,94,0.4)} 50%{box-shadow:0 0 0 8px rgba(34,197,94,0)} }
+  .demo-btn {
+    width: 100%;
+    background: linear-gradient(135deg, #0f172a, #1e293b);
+    color: #22c55e;
+    border: 1.5px solid rgba(34,197,94,0.4);
+    border-radius: 16px;
+    padding: 14px;
+    font-weight: 800;
+    font-size: 14px;
+    letter-spacing: -0.2px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    transition: all 0.3s cubic-bezier(0.16,1,0.3,1);
+    font-family: inherit;
+  }
+  .demo-btn:hover:not(:disabled) {
+    background: linear-gradient(135deg, #1e293b, #0f172a);
+    border-color: #22c55e;
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(34,197,94,0.2);
+    animation: demoPulse 2s ease-in-out infinite;
+  }
+  .demo-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .demo-panel {
+    background: #0f172a;
+    border: 1px solid rgba(34,197,94,0.25);
+    border-radius: 20px;
+    padding: 24px;
+    margin-top: 16px;
+  }
+  .demo-user-card {
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 14px;
+    padding: 16px;
+    margin-bottom: 12px;
+    transition: border-color 0.2s;
+  }
+  .demo-user-card:hover { border-color: rgba(34,197,94,0.4); }
+  .demo-login-btn {
+    width: 100%;
+    padding: 12px;
+    border-radius: 10px;
+    border: none;
+    font-weight: 800;
+    font-size: 13px;
+    cursor: pointer;
+    margin-top: 10px;
+    font-family: inherit;
+    transition: all 0.2s;
+  }
+  .demo-login-btn.seller { background: #22c55e; color: #000; }
+  .demo-login-btn.seller:hover { background: #16a34a; }
+  .demo-login-btn.buyer  { background: #3b82f6; color: #fff; }
+  .demo-login-btn.buyer:hover  { background: #2563eb; }
 `;
 
 export default function Login() {
@@ -67,100 +128,84 @@ export default function Login() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [mounted, setMounted] = useState(false);
-  const [otpStep, setOtpStep] = useState(null); // null, 'email', 'verify', 'password'
-  const [otp, setOtp] = useState('');
-  const [otpEmail, setOtpEmail] = useState('');
   const navigate = useNavigate();
+
+  // ── Signup state ────────────────────────────────────────────────────────────
+  // step: 'email' | 'otp' | 'details' | 'done'
+  const [step, setStep] = useState('email');
+  const [signupEmail, setSignupEmail] = useState('');
+  const [otpCode, setOtpCode] = useState('');
+  const [emailSent, setEmailSent] = useState(false);
+  const [signupName, setSignupName] = useState('');
+  const [signupPass, setSignupPass] = useState('');
+  const [signupPassConfirm, setSignupPassConfirm] = useState('');
+
+  const resetSignup = () => {
+    setStep('email'); setSignupEmail(''); setOtpCode('');
+    setEmailSent(false);
+    setSignupName(''); setSignupPass(''); setSignupPassConfirm('');
+    setError('');
+  };
 
   useEffect(() => { setTimeout(() => setMounted(true), 60); }, []);
 
-  // Email validation function
-  const isValidEmail = (email) => {
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    return emailRegex.test(email);
-  };
-
-  const handleRequestOTP = async () => {
+  // Step 1 → send OTP
+  const handleSendOTP = async () => {
+    const email = signupEmail.trim().toLowerCase();
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setError('Enter a valid email address.'); return;
+    }
     setError(''); setLoading(true);
     try {
-      if (!form.email) {
-        setError('Please enter your email address');
-        setLoading(false);
-        return;
-      }
-      if (!isValidEmail(form.email)) {
-        setError('Please enter a valid email address');
-        setLoading(false);
-        return;
-      }
-      const apiBase = process.env.REACT_APP_API_BASE_URL || 'http://localhost:5001/api';
-      const res = await axios.post(`${apiBase}/auth/request-otp`, { email: form.email });
+      const api = process.env.REACT_APP_API_BASE_URL || 'http://localhost:5001/api';
+      const res = await axios.post(`${api}/auth/request-otp`, { email });
       if (res.data.success) {
-        setOtpEmail(form.email);
-        setOtpStep('verify');
+        setEmailSent(res.data.emailDelivered !== false);
+        setStep('otp');
       }
     } catch (err) {
-      setError(err.response?.data?.message || 'Failed to send OTP. Please try again.');
+      setError(err.response?.data?.message || 'Could not send OTP. Is the backend running?');
     } finally { setLoading(false); }
   };
 
+  // Step 2 → verify OTP
   const handleVerifyOTP = async () => {
+    const code = otpCode.replace(/\D/g, '');
+    if (code.length !== 6) { setError('Enter the 6-digit OTP.'); return; }
     setError(''); setLoading(true);
     try {
-      if (!otp || otp.length !== 6) {
-        setError('Please enter a valid 6-digit OTP');
-        setLoading(false);
-        return;
-      }
-      const apiBase = process.env.REACT_APP_API_BASE_URL || 'http://localhost:5001/api';
-      const res = await axios.post(`${apiBase}/auth/verify-otp`, { email: otpEmail, otp });
-      if (res.data.success) {
-        setOtpStep('password');
-        setForm({ ...form, email: otpEmail });
-      }
+      const api = process.env.REACT_APP_API_BASE_URL || 'http://localhost:5001/api';
+      const res = await axios.post(`${api}/auth/verify-otp`, { email: signupEmail.trim().toLowerCase(), otp: code });
+      if (res.data.success) { setStep('details'); }
     } catch (err) {
-      setError(err.response?.data?.message || 'Failed to verify OTP. Please try again.');
+      setError(err.response?.data?.message || 'OTP verification failed.');
     } finally { setLoading(false); }
   };
 
+  // Step 3 → complete signup
   const handleCompleteSignup = async () => {
+    if (!signupName.trim()) { setError('Enter your name.'); return; }
+    if (signupPass.length < 6) { setError('Password must be at least 6 characters.'); return; }
+    if (signupPass !== signupPassConfirm) { setError('Passwords do not match.'); return; }
     setError(''); setLoading(true);
     try {
-      if (!form.name || !form.password) {
-        setError('Please fill in all fields');
-        setLoading(false);
-        return;
-      }
-      if (form.password.length < 6) {
-        setError('Password must be at least 6 characters');
-        setLoading(false);
-        return;
-      }
-      const apiBase = process.env.REACT_APP_API_BASE_URL || 'http://localhost:5001/api';
-      const res = await axios.post(`${apiBase}/auth/signup-with-otp`, { 
-        name: form.name, 
-        email: form.email, 
-        password: form.password, 
-        address: 'Campus' // Default address since user removed it
+      const api = process.env.REACT_APP_API_BASE_URL || 'http://localhost:5001/api';
+      const res = await axios.post(`${api}/auth/signup-with-otp`, {
+        name: signupName.trim(),
+        email: signupEmail.trim().toLowerCase(),
+        password: signupPass,
       });
       if (res.data.success) {
         localStorage.setItem('token', res.data.token);
         localStorage.setItem('user', JSON.stringify(res.data.user));
-        setOtpStep('success');
+        if (window.__socket) window.__socket.emit('register', res.data.user._id);
+        setStep('done');
+        setTimeout(() => navigate('/dashboard'), 1500);
       }
     } catch (err) {
-      setError(err.response?.data?.message || 'Something went wrong. Please try again.');
-     } finally { setLoading(false); }
+      setError(err.response?.data?.message || 'Signup failed. Please try again.');
+    } finally { setLoading(false); }
   };
-
-  useEffect(() => {
-    if (otpStep === 'success') {
-      const timer = setTimeout(() => {
-        navigate('/dashboard');
-      }, 1500);
-      return () => clearTimeout(timer);
-    }
-  }, [otpStep, navigate]);
 
   const handleSubmit = async () => {
     setError(''); setLoading(true);
@@ -171,11 +216,54 @@ export default function Login() {
       if (res.data.success) {
         localStorage.setItem('token', res.data.token);
         localStorage.setItem('user', JSON.stringify(res.data.user));
+        // Register socket room so live telemetry & IES events start flowing
+        if (window.__socket) {
+          window.__socket.emit('register', res.data.user._id);
+        }
         navigate('/dashboard');
       }
     } catch (err) {
       setError(err.response?.data?.message || 'Something went wrong. Please try again.');
     } finally { setLoading(false); }
+  };
+
+  // ── Demo Mode ─────────────────────────────────────────────────────────────
+  const [demoLoading, setDemoLoading] = useState(false);
+  const [demoReady, setDemoReady]     = useState(false);
+  const [demoUsers, setDemoUsers]     = useState(null);
+  const [showDemo, setShowDemo]       = useState(false);
+
+  const seedDemo = async () => {
+    setDemoLoading(true);
+    setError('');
+    try {
+      const apiBase = process.env.REACT_APP_API_BASE_URL || 'http://localhost:5001/api';
+      const res = await axios.post(`${apiBase}/auth/demo-seed`);
+      if (res.data.success) {
+        setDemoUsers(res.data.users);
+        setDemoReady(true);
+      } else {
+        setError(res.data.message || 'Demo seed failed');
+      }
+    } catch (err) {
+      setError('❌ Backend not running. Open a terminal → cd backend → node server.js');
+    } finally { setDemoLoading(false); }
+  };
+
+  const loginAs = (userData) => {
+    localStorage.setItem('token', userData.token);
+    localStorage.setItem('user', JSON.stringify(userData.user));
+    if (window.__socket) {
+      window.__socket.emit('register', userData.user._id);
+      if (userData.role === 'seller') {
+        window.__socket.emit('meter:setProsumer', {
+          userId: userData.user._id,
+          generationKw: 8,
+          consumptionKw: 3,
+        });
+      }
+    }
+    navigate('/dashboard');
   };
 
   const particles = [
@@ -229,7 +317,7 @@ export default function Login() {
         {/* iOS Pill Toggle */}
         <div style={{ display: 'flex', background: 'rgba(253,230,138,0.3)', borderRadius: 14, padding: 6, marginBottom: 28, boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.02)' }}>
           {['Login', 'Sign Up'].map((label, i) => (
-            <button key={label} onClick={() => { setIsLogin(i === 0); setError(''); setOtpStep(null); setOtp(''); }}
+            <button key={label} onClick={() => { setIsLogin(i === 0); setError(''); if (i === 1) resetSignup(); }}
               style={{
                 flex: 1, padding: '12px', borderRadius: 10, border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 800, fontSize: 14, letterSpacing: -0.2, transition: 'all 0.4s cubic-bezier(0.16, 1, 0.3, 1)',
                 background: (i === 0) === isLogin ? '#fff' : 'transparent',
@@ -246,7 +334,7 @@ export default function Login() {
           <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', color: '#b91c1c', fontSize: 13, padding: '12px 16px', borderRadius: 12, marginBottom: 20 }}>❌ {error}</div>
         )}
 
-        {/* LOGIN FORM */}
+        {/* ── LOGIN FORM ─────────────────────────────────────────────────── */}
         {isLogin ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
             <input type="email" placeholder="Email address" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} className="premium-input" />
@@ -255,98 +343,108 @@ export default function Login() {
               {loading ? '⏳ Please wait...' : 'Login to Urjamitra ⚡'}
             </button>
           </div>
-        ) : otpStep === null ? (
-          /* SIGNUP STEP 1: Name & Email Entry */
+
+        ) : step === 'email' ? (
+          /* ── SIGNUP STEP 1: Email ──────────────────────────────────────── */
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            <input 
-              type="text" 
-              placeholder="Your full name" 
-              value={form.name} 
-              onChange={e => setForm({ ...form, name: e.target.value })} 
-              className="premium-input" 
+            <p style={{ margin: '0 0 4px', fontSize: 13, color: '#92400e', fontWeight: 600 }}>
+              Enter your email — we'll send you a one-time code to verify it.
+            </p>
+            <input
+              type="email"
+              placeholder="you@example.com"
+              value={signupEmail}
+              onChange={e => { setSignupEmail(e.target.value); setError(''); }}
+              onKeyDown={e => e.key === 'Enter' && handleSendOTP()}
+              className="premium-input"
               autoFocus
             />
-            <input 
-              type="email" 
-              placeholder="Email address" 
-              value={form.email} 
-              onChange={e => setForm({ ...form, email: e.target.value })} 
-              className="premium-input" 
-            />
-            <button onClick={handleRequestOTP} disabled={loading} className="gradient-btn" style={{ width: '100%', marginTop: 24 }}>
-              {loading ? '⏳ Sending OTP...' : 'Send OTP 📧'}
+            <button onClick={handleSendOTP} disabled={loading} className="gradient-btn" style={{ width: '100%', marginTop: 16 }}>
+              {loading ? '⏳ Sending…' : 'Send OTP 📧'}
             </button>
           </div>
-        ) : otpStep === 'verify' ? (
-          /* SIGNUP STEP 2: OTP Verification */
+
+        ) : step === 'otp' ? (
+          /* ── SIGNUP STEP 2: OTP ─────────────────────────────────────────── */
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            <div style={{ background: 'rgba(251,146,60,0.15)', border: '1px solid rgba(251,146,60,0.4)', padding: '14px 16px', borderRadius: 12, marginBottom: 8 }}>
-              <p style={{ margin: 0, fontSize: 13, color: '#92400e', fontWeight: 600 }}>Code sent to {otpEmail}</p>
+            {/* info banner */}
+            <div style={{ background: emailSent ? 'rgba(34,197,94,0.1)' : 'rgba(245,158,11,0.12)', border: `1px solid ${emailSent ? 'rgba(34,197,94,0.4)' : 'rgba(245,158,11,0.4)'}`, padding: '12px 16px', borderRadius: 12 }}>
+              <p style={{ margin: 0, fontSize: 13, color: '#92400e', fontWeight: 600 }}>
+                {emailSent ? `✅ Code sent to ${signupEmail}` : `⚠️ Email delivery failed. Please tap Resend OTP.`}
+              </p>
             </div>
-            <input 
-              type="text" 
-              placeholder="000000" 
-              value={otp} 
-              onChange={e => setOtp(e.target.value.slice(0, 6))}
+
+            <input
+              type="text"
+              inputMode="numeric"
+              placeholder="000000"
+              value={otpCode}
+              onChange={e => { setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6)); setError(''); }}
+              onKeyDown={e => e.key === 'Enter' && handleVerifyOTP()}
               maxLength="6"
               className="premium-input"
-              style={{ fontSize: 24, letterSpacing: '8px', textAlign: 'center', fontWeight: 700 }}
+              style={{ fontSize: 28, letterSpacing: '10px', textAlign: 'center', fontWeight: 700 }}
               autoFocus
             />
-            <button onClick={handleVerifyOTP} disabled={loading} className="gradient-btn" style={{ width: '100%', marginTop: 24 }}>
-              {loading ? '⏳ Verifying...' : 'Verify OTP ✓'}
+
+            <button onClick={handleVerifyOTP} disabled={loading || otpCode.length !== 6} className="gradient-btn" style={{ width: '100%', marginTop: 8 }}>
+              {loading ? '⏳ Verifying…' : 'Verify Code ✓'}
             </button>
-            <button onClick={() => { setOtpStep(null); setOtp(''); }} disabled={loading} style={{
-              background: 'transparent',
-              color: '#ea580c',
-              border: '1px solid #fed7aa',
-              borderRadius: 16,
-              padding: 18,
-              fontWeight: 800,
-              fontSize: 15,
-              cursor: 'pointer',
-              transition: 'all 0.3s'
-            }} onMouseEnter={e => e.target.style.background = 'rgba(253,230,138,0.2)'} onMouseLeave={e => e.target.style.background = 'transparent'}>
-              ← Back
-            </button>
-          </div>
-        ) : otpStep === 'password' ? (
-          /* SIGNUP STEP 3: Password Entry */
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            <input type="password" placeholder="Password (min 6 characters)" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} className="premium-input" autoFocus />
-            <button onClick={handleCompleteSignup} disabled={loading} className="gradient-btn" style={{ width: '100%', marginTop: 24 }}>
-              {loading ? '⏳ Creating account...' : 'Join Urjamitra 🌱'}
-            </button>
-            <button onClick={() => { setOtpStep('verify'); setForm({ ...form, password: '' }); }} disabled={loading} style={{
-              background: 'transparent',
-              color: '#ea580c',
-              border: '1px solid #fed7aa',
-              borderRadius: 16,
-              padding: 18,
-              fontWeight: 800,
-              fontSize: 15,
-              cursor: 'pointer',
-              transition: 'all 0.3s'
-            }} onMouseEnter={e => e.target.style.background = 'rgba(253,230,138,0.2)'} onMouseLeave={e => e.target.style.background = 'transparent'}>
-              ← Back
-            </button>
-          </div>
-        ) : otpStep === 'success' ? (
-          /* SIGNUP SUCCESS: Thank You Message */
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 14, justifyContent: 'center', alignItems: 'center', textAlign: 'center', minHeight: 320 }}>
-            <div style={{ animation: 'scale-bounce 0.6s ease-in-out', fontSize: 64 }}>
-              ✨
+
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button onClick={resetSignup} disabled={loading} style={{ flex: 1, background: 'transparent', color: '#ea580c', border: '1px solid #fed7aa', borderRadius: 14, padding: '14px', fontWeight: 700, fontSize: 14, cursor: 'pointer' }}>
+                ← Back
+              </button>
+              <button onClick={handleSendOTP} disabled={loading} style={{ flex: 1, background: 'transparent', color: '#a16207', border: '1px solid #fde68a', borderRadius: 14, padding: '14px', fontWeight: 700, fontSize: 14, cursor: 'pointer' }}>
+                Resend OTP ↺
+              </button>
             </div>
-            <h2 style={{ margin: 0, fontSize: 28, fontWeight: 900, color: '#451a03', fontFamily: "'Playfair Display',serif" }}>
-              Welcome to Urjamitra!
-            </h2>
-            <p style={{ margin: 0, fontSize: 16, color: '#92400e', fontWeight: 600, lineHeight: 1.6 }}>
-              Thank you for joining UrjaMitra.
-            </p>
-            <p style={{ margin: '8px 0 0 0', fontSize: 14, color: '#a16207', fontWeight: 500 }}>
-              You're now part of our energy community! 🌱
-            </p>
-            <div style={{ marginTop: 16, display: 'flex', gap: 8, fontSize: 12, color: '#a16207' }}>
+          </div>
+
+        ) : step === 'details' ? (
+          /* ── SIGNUP STEP 3: Name + Password ─────────────────────────────── */
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <div style={{ background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.35)', padding: '10px 14px', borderRadius: 10 }}>
+              <p style={{ margin: 0, fontSize: 13, color: '#166534', fontWeight: 600 }}>✅ Email verified: {signupEmail}</p>
+            </div>
+            <input
+              type="text"
+              placeholder="Full name"
+              value={signupName}
+              onChange={e => { setSignupName(e.target.value); setError(''); }}
+              className="premium-input"
+              autoFocus
+            />
+            <input
+              type="password"
+              placeholder="Password (min 6 characters)"
+              value={signupPass}
+              onChange={e => { setSignupPass(e.target.value); setError(''); }}
+              className="premium-input"
+            />
+            <input
+              type="password"
+              placeholder="Confirm password"
+              value={signupPassConfirm}
+              onChange={e => { setSignupPassConfirm(e.target.value); setError(''); }}
+              onKeyDown={e => e.key === 'Enter' && handleCompleteSignup()}
+              className="premium-input"
+            />
+            <button onClick={handleCompleteSignup} disabled={loading} className="gradient-btn" style={{ width: '100%', marginTop: 8 }}>
+              {loading ? '⏳ Creating account…' : 'Join Urjamitra 🌱'}
+            </button>
+            <button onClick={() => { setStep('otp'); setError(''); }} disabled={loading} style={{ background: 'transparent', color: '#ea580c', border: '1px solid #fed7aa', borderRadius: 14, padding: '14px', fontWeight: 700, fontSize: 14, cursor: 'pointer' }}>
+              ← Back
+            </button>
+          </div>
+
+        ) : step === 'done' ? (
+          /* ── SIGNUP SUCCESS ───────────────────────────────────────────────── */
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', gap: 16, minHeight: 280, justifyContent: 'center' }}>
+            <div style={{ fontSize: 64, animation: 'scale-bounce 0.6s ease-in-out' }}>✨</div>
+            <h2 style={{ margin: 0, fontSize: 26, fontWeight: 900, color: '#451a03', fontFamily: "'Playfair Display',serif" }}>Welcome to Urjamitra!</h2>
+            <p style={{ margin: 0, fontSize: 15, color: '#92400e', fontWeight: 600 }}>You're now part of our energy community 🌱</p>
+            <div style={{ display: 'flex', gap: 6, fontSize: 13, color: '#a16207', marginTop: 8 }}>
               <span>Redirecting to dashboard</span>
               <span style={{ animation: 'dot-fade 1.5s infinite' }}>.</span>
               <span style={{ animation: 'dot-fade 1.5s infinite', animationDelay: '0.3s' }}>.</span>
@@ -356,6 +454,91 @@ export default function Login() {
         ) : null}
 
         <p style={{ textAlign: 'center', fontSize: 12, color: '#a16207', marginTop: 20, marginBottom: 0, fontWeight: 600 }}>Your neighborhood energy community 🏘️</p>
+
+        {/* ── Demo Mode Panel ── */}
+        <div style={{ marginTop: 24, borderTop: '1px solid rgba(245,158,11,0.2)', paddingTop: 20 }}>
+          <button
+            className="demo-btn"
+            onClick={() => { setShowDemo(d => !d); if (!demoReady && !showDemo) seedDemo(); }}
+            disabled={demoLoading}
+          >
+            {demoLoading
+              ? <><span style={{ width: 14, height: 14, border: '2px solid rgba(34,197,94,0.3)', borderTopColor: '#22c55e', borderRadius: '50%', display: 'inline-block', animation: 'sunSpin 0.8s linear infinite' }} /> Seeding demo accounts...</>
+              : demoReady
+                ? (showDemo ? '▲ Hide Demo Panel' : '🎬 Show Demo Login')
+                : '🎬 Launch Demo Mode'
+            }
+          </button>
+
+          {showDemo && demoReady && demoUsers && (
+            <div className="demo-panel">
+              <div style={{ fontFamily: 'monospace', fontSize: 11, color: '#22c55e', marginBottom: 16, letterSpacing: 0.5 }}>
+                ✅ DEMO ACCOUNTS READY · METERS SEEDED AT 8 kW SOLAR
+              </div>
+
+              <div style={{ fontSize: 11, color: '#64748b', marginBottom: 14, lineHeight: 1.6 }}>
+                Open this page in <strong style={{ color: '#94a3b8' }}>two browser tabs</strong>.<br />
+                Log in as Arun in Tab 1, Lakshmi in Tab 2.
+              </div>
+
+              {demoUsers.map((u) => (
+                <div key={u.email} className="demo-user-card">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
+                    <div>
+                      <div style={{ fontSize: 15, fontWeight: 800, color: '#f1f5f9' }}>{u.name}</div>
+                      <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
+                        {u.role === 'seller' ? '☀️ Prosumer · Seller' : '🏠 Consumer · Buyer'}
+                      </div>
+                    </div>
+                    <div style={{
+                      background: u.role === 'seller' ? 'rgba(34,197,94,0.1)' : 'rgba(59,130,246,0.1)',
+                      border: `1px solid ${u.role === 'seller' ? 'rgba(34,197,94,0.3)' : 'rgba(59,130,246,0.3)'}`,
+                      borderRadius: 6, padding: '3px 8px', fontSize: 12, fontWeight: 700,
+                      color: u.role === 'seller' ? '#22c55e' : '#3b82f6'
+                    }}>
+                      ₹{u.wallet}
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, fontSize: 11, marginBottom: 6 }}>
+                    <div style={{ background: 'rgba(255,255,255,0.04)', borderRadius: 6, padding: '6px 8px' }}>
+                      <div style={{ color: '#475569' }}>Email</div>
+                      <div style={{ color: '#94a3b8', fontFamily: 'monospace', marginTop: 1 }}>{u.email}</div>
+                    </div>
+                    <div style={{ background: 'rgba(255,255,255,0.04)', borderRadius: 6, padding: '6px 8px' }}>
+                      <div style={{ color: '#475569' }}>Password</div>
+                      <div style={{ color: '#94a3b8', fontFamily: 'monospace', marginTop: 1 }}>{u.password}</div>
+                    </div>
+                  </div>
+
+                  {u.role === 'seller' && (
+                    <div style={{ background: 'rgba(234,179,8,0.08)', border: '1px solid rgba(234,179,8,0.2)', borderRadius: 8, padding: '8px 10px', fontSize: 11, color: '#ca8a04', marginBottom: 6 }}>
+                      ⚡ Meter seeded: 8 kW generation · 5 kWh listing @ ₹5/kWh · DISCOM logs pre-loaded
+                    </div>
+                  )}
+
+                  <button
+                    className={`demo-login-btn ${u.role}`}
+                    onClick={() => loginAs(u)}
+                  >
+                    {u.role === 'seller'
+                      ? `☀️ Login as ${u.name} (Seller) — Tab 1`
+                      : `🏠 Login as ${u.name} (Buyer) — Tab 2`}
+                  </button>
+                </div>
+              ))}
+
+              <div style={{ marginTop: 12, padding: '12px 14px', background: 'rgba(255,255,255,0.03)', borderRadius: 10, fontSize: 11, color: '#64748b', lineHeight: 2 }}>
+                <div style={{ color: '#94a3b8', fontWeight: 700, marginBottom: 4 }}>📋 After logging in:</div>
+                <div>1. <strong style={{ color: '#f1f5f9' }}>Arun (Tab 1)</strong> → Dashboard shows 8 kW solar live</div>
+                <div>2. <strong style={{ color: '#f1f5f9' }}>Lakshmi (Tab 2)</strong> → Sidebar → 🔗 P2P Trade</div>
+                <div>3. Select Arun's listing → Enter 5 units → Initiate Trade</div>
+                <div>4. <strong style={{ color: '#f1f5f9' }}>Arun (Tab 1)</strong> → P2P Trade page → Approve consent</div>
+                <div>5. Watch IES console → DISCOM verify → Settlement! 🎉</div>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

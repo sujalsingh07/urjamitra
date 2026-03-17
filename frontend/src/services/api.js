@@ -381,5 +381,50 @@ export const api = {
   getConversations,
   getChatHistory,
   markMessagesAsRead,
-  sendUserMessage
+  sendUserMessage,
+
+  /* ── IES / Smart Meter ───────────────────────── */
+  getIESIdentity: async () => {
+    try { const r = await apiClient.get('/ies/identity'); return r.data; }
+    catch (e) { return handleError(e); }
+  },
+
+  getTelemetry: async () => {
+    try { const r = await apiClient.get('/ies/telemetry'); return r.data; }
+    catch (e) { return handleError(e); }
+  },
+
+  getAllTelemetry: async () => {
+    try { const r = await apiClient.get('/ies/telemetry/all'); return r.data; }
+    catch (e) { return handleError(e); }
+  },
+
+  initiateIESTrade: async (listingId, units) => {
+    try {
+      const r = await apiClient.post('/ies/trade/initiate', { listingId, units });
+      return r.data;
+    } catch (e) { return handleError(e); }
+  },
+
+  approveConsent: async (consentId, decision) => {
+    try {
+      const r = await apiClient.post(`/ies/consent/${consentId}/approve`, { decision });
+      return r.data;
+    } catch (e) { return handleError(e); }
+  },
+
+  getPendingConsents: async () => {
+    try { const r = await apiClient.get('/ies/pending-consents'); return r.data; }
+    catch (e) { return handleError(e); }
+  },
+
+  getTradeStatus: async (tradeId) => {
+    try { const r = await apiClient.get(`/ies/trade/${tradeId}/status`); return r.data; }
+    catch (e) { return handleError(e); }
+  },
+
+  registerMeter: async () => {
+    try { const r = await apiClient.post('/ies/register-meter'); return r.data; }
+    catch (e) { return handleError(e); }
+  },
 };

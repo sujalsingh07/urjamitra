@@ -1,8 +1,11 @@
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
+import { api } from '../services/api';
 
 export default function Sidebar({ isOpen, close }) {
     const navigate = useNavigate();
     const location = useLocation();
+    const [hasUnreadMessages, setHasUnreadMessages] = useState(false);
     const links = [
         { path: '/dashboard', label: 'Dashboard', icon: '⚡' },
         { path: '/marketplace', label: 'Marketplace', icon: '🏪' },
@@ -14,6 +17,46 @@ export default function Sidebar({ isOpen, close }) {
     const userStr = localStorage.getItem('user');
     const user = userStr ? JSON.parse(userStr) : null;
     const initial = user?.name ? user.name.charAt(0).toUpperCase() : 'U';
+    const currentUserId = useMemo(() => user?.id || user?._id || null, [user]);
+
+    useEffect(() => {
+        if (!currentUserId) return;
+
+        const computeUnread = async () => {
+            try {
+                const res = await api.getConversations();
+                if (!res?.success || !Array.isArray(res.conversations)) {
+                    setHasUnreadMessages(false);
+                    return;
+                }
+
+                const unreadExists = res.conversations.some((c) => {
+                    const m = c?.lastMessage;
+                    return m && !m.read && String(m.receiverId) === String(currentUserId);
+                });
+                setHasUnreadMessages(unreadExists);
+            } catch {
+                setHasUnreadMessages(false);
+            }
+        };
+
+        computeUnread();
+
+        const sock = window.__socket;
+        const onReceiveMessage = (message) => {
+            if (String(message?.receiverId) === String(currentUserId)) {
+                computeUnread();
+            }
+        };
+
+        if (sock) {
+            sock.on('receiveMessage', onReceiveMessage);
+        }
+
+        return () => {
+            if (sock) sock.off('receiveMessage', onReceiveMessage);
+        };
+    }, [currentUserId, location.pathname]);
 
     return (
         <>
@@ -63,10 +106,26 @@ export default function Sidebar({ isOpen, close }) {
                 <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
                     {links.map(l => {
                         const active = location.pathname === l.path;
+                        const showUnreadDot = l.path === '/messages' && hasUnreadMessages;
                         return (
                             <div key={l.path} className={`sidebar-link ${active ? 'active' : ''}`} onClick={() => { navigate(l.path); close(); }}>
                                 <span style={{ fontSize: 20, filter: active ? 'none' : 'grayscale(100%) opacity(0.6)', transform: active ? 'scale(1.1)' : 'none', transition: 'transform 0.2s' }}>{l.icon}</span>
-                                {l.label}
+                                <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                    {l.label}
+                                    {showUnreadDot && (
+                                        <span
+                                            aria-label="unread messages"
+                                            style={{
+                                                width: 9,
+                                                height: 9,
+                                                borderRadius: '50%',
+                                                background: '#ef4444',
+                                                boxShadow: '0 0 0 2px rgba(255,255,255,0.9)',
+                                                display: 'inline-block'
+                                            }}
+                                        />
+                                    )}
+                                </span>
                             </div>
                         );
                     })}

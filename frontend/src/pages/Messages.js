@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
-import { io } from 'socket.io-client';
 import { api } from '../services/api';
 
 const CSS = `
@@ -85,13 +84,12 @@ export default function Messages() {
   useEffect(() => {
     if (!currentUserId) return;
 
-    // Connect to Socket server
-    const backendUrl = "http://localhost:5001"; // Should match your backend
-    socketRef.current = io(backendUrl);
+    // Use the global socket from index.js instead of creating a new one
+    const sock = window.__socket;
+    if (!sock) return;
+    socketRef.current = sock;
 
-    socketRef.current.on("connect", () => {
-      socketRef.current.emit("register", currentUserId);
-    });
+    socketRef.current.emit("register", currentUserId);
 
     socketRef.current.on("receiveMessage", (message) => {
       // If the message belong to the active chat
@@ -117,7 +115,11 @@ export default function Messages() {
     fetchConversations();
 
     return () => {
-      if (socketRef.current) socketRef.current.disconnect();
+      // Don't disconnect — it's the global socket shared across the app
+      if (socketRef.current) {
+        socketRef.current.off("receiveMessage");
+        socketRef.current.off("messageSent");
+      }
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUserId]);

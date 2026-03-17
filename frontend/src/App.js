@@ -115,6 +115,20 @@ function AnimatedRoutes() {
           }
         />
 
+        {/* IES P2P TRADE FLOW (merged into Marketplace) */}
+        <Route
+          path="/ies-trade"
+          element={
+            <ProtectedRoute>
+              <Layout>
+                <PageTransition>
+                  <Marketplace />
+                </PageTransition>
+              </Layout>
+            </ProtectedRoute>
+          }
+        />
+
       </Routes>
     </AnimatePresence>
   );

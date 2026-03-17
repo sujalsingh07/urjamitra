@@ -205,6 +205,8 @@ export default function Dashboard() {
   });
   const [localUser] = useState(() => JSON.parse(localStorage.getItem('user')) || { name: 'Arjun' });
   const [recentActivity, setRecentActivity] = useState([]);
+  const [liveMeter, setLiveMeter] = useState(null);
+  const [iesId, setIesId] = useState(null);
 
   const currentUserId = localUser?.id || localUser?._id || null;
 
@@ -337,10 +339,44 @@ export default function Dashboard() {
       setTimeout(() => setMounted(true), 60);
       await loadProfileAndCommunity();
       loadRecentActivity();
+
+      // Load IES identity
+      try {
+        const token = localStorage.getItem('token');
+        if (token) {
+          const API_BASE = process.env.REACT_APP_API_BASE_URL || 'http://localhost:5001/api';
+          const r = await fetch(`${API_BASE}/ies/identity`, { headers: { Authorization: `Bearer ${token}` } });
+          const d = await r.json();
+          if (d.success) setIesId(d.iesId);
+
+          // Load initial telemetry
+          const t = await fetch(`${API_BASE}/ies/telemetry`, { headers: { Authorization: `Bearer ${token}` } });
+          const td = await t.json();
+          if (td.success && td.meterState) setLiveMeter(td.meterState);
+        }
+      } catch (_) {}
     };
 
     loadDashboardData();
-  }, [loadRecentActivity, loadProfileAndCommunity]);
+
+    // Socket telemetry subscription
+    const socket = window.__socket;
+    if (socket) {
+      const uid = currentUserId;
+      const handleTelemetry = (data) => {
+        if (uid && data.meters?.[uid]) setLiveMeter(data.meters[uid]);
+      };
+      const handleInit = (data) => {
+        if (uid && data.meters?.[uid]) setLiveMeter(data.meters[uid]);
+      };
+      socket.on('telemetry:update', handleTelemetry);
+      socket.on('telemetry:init', handleInit);
+      return () => {
+        socket.off('telemetry:update', handleTelemetry);
+        socket.off('telemetry:init', handleInit);
+      };
+    }
+  }, [loadRecentActivity, loadProfileAndCommunity, currentUserId]);
 
   useEffect(() => {
     const id = setInterval(() => {
@@ -358,6 +394,10 @@ export default function Dashboard() {
   const totalEarnings = Number(userProfile?.totalEarnings || 0);
   const co2SavedRaw = Number(userProfile?.co2Saved || 0);
   const co2Saved = co2SavedRaw > 0 ? co2SavedRaw : Number((energyShared * 0.82).toFixed(1));
+  const unusedEnergyKwh = Math.max(
+    0,
+    Number(liveMeter?.totalExportToday || 0) - Number(liveMeter?.totalImportToday || 0)
+  );
   const safeCommunitySize = Number.isFinite(Number(communityStats.communitySize)) && Number(communityStats.communitySize) > 0
     ? Number(communityStats.communitySize)
     : 0;
@@ -429,15 +469,19 @@ export default function Dashboard() {
               <div>
                 <p style={{ margin: 0, fontSize: 11, color: '#92740a', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1.5 }}>Live Generation</p>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 5, marginTop: 3 }}>
-                  <span style={{ fontSize: 42, fontWeight: 900, color: '#b45309', lineHeight: 1, letterSpacing: -1.5 }}>{liveGenerationKwh}</span>
-                  <span style={{ fontSize: 17, color: '#d97706', fontWeight: 600 }}>kWh</span>
+                  <span style={{ fontSize: 42, fontWeight: 900, color: '#b45309', lineHeight: 1, letterSpacing: -1.5 }}>
+                    {liveMeter ? liveMeter.generationKw : liveGenerationKwh}
+                  </span>
+                  <span style={{ fontSize: 17, color: '#d97706', fontWeight: 600 }}>{liveMeter ? 'kW live' : 'kWh'}</span>
                 </div>
               </div>
               <div style={{ textAlign: 'right' }}>
                 <div style={{ background: '#f0fdf4', border: '1.5px solid #86efac', borderRadius: 10, padding: '7px 16px', marginBottom: 5 }}>
                   <span style={{ color: '#15803d', fontWeight: 800, fontSize: 14 }}>₹{totalEarnings.toFixed(0)} total earned</span>
                 </div>
-                <p style={{ margin: 0, fontSize: 11, color: '#92740a', fontWeight: 500 }}>Live from your profile data</p>
+                <p style={{ margin: 0, fontSize: 11, color: '#92740a', fontWeight: 500 }}>
+                  {liveMeter ? '⚡ Smart Meter Live' : 'From your profile data'}
+                </p>
               </div>
             </div>
             {/* Progress bar */}
@@ -445,6 +489,69 @@ export default function Dashboard() {
               <div style={{ width: `${pct}%`, height: '100%', borderRadius: 99, background: 'linear-gradient(90deg,#fbbf24,#f59e0b)', boxShadow: '0 0 8px rgba(245,158,11,0.4)', transition: 'width 1s ease' }} />
             </div>
             <p style={{ margin: '7px 0 0', fontSize: 12, color: '#92740a', fontWeight: 500 }}>{pct}% of 16 kWh daily target</p>
+
+            {/* ── Live Smart Meter Telemetry Row ── */}
+            {liveMeter && (
+              <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid rgba(245,158,11,0.15)', display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 12 }}>
+                {[
+                  { label: '☀️ Generation', val: `${liveMeter.generationKw} kW`, color: '#b45309', bar: Math.max(0, Math.min(100, (liveMeter.generationKw / 12) * 100)), barColor: '#f59e0b' },
+                  { label: '🏠 Consumption', val: `${liveMeter.consumptionKw} kW`, color: '#1d4ed8', bar: Math.max(0, Math.min(100, (liveMeter.consumptionKw / 6) * 100)), barColor: '#3b82f6' },
+                  { label: liveMeter.surplusKw >= 0 ? '📤 Surplus' : '📥 Deficit', val: `${liveMeter.surplusKw} kW`, color: liveMeter.surplusKw > 0 ? '#15803d' : '#dc2626', bar: Math.max(0, Math.min(100, (Math.abs(liveMeter.surplusKw) / 8) * 100)), barColor: liveMeter.surplusKw > 0 ? '#22c55e' : '#ef4444' },
+                ].map(m => (
+                  <div key={m.label}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 4 }}>
+                      <span style={{ color: '#92740a', fontWeight: 600 }}>{m.label}</span>
+                      <span style={{ color: m.color, fontWeight: 800 }}>{m.val}</span>
+                    </div>
+                    <div style={{ height: 4, background: 'rgba(0,0,0,0.07)', borderRadius: 2, overflow: 'hidden' }}>
+                      <div style={{ width: `${m.bar}%`, height: '100%', background: m.barColor, borderRadius: 2, transition: 'width 0.8s ease' }} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* ── Unused Energy Quick Action ── */}
+            {liveMeter && unusedEnergyKwh > 0.01 && (
+              <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid rgba(245,158,11,0.15)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+                <div>
+                  <p style={{ margin: '0 0 4px', fontSize: 11, color: '#92740a', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1.5 }}>⚡ Unused Energy</p>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                    <span style={{ fontSize: 24, fontWeight: 900, color: '#b45309', letterSpacing: -0.5 }}>{unusedEnergyKwh.toFixed(2)}</span>
+                    <span style={{ fontSize: 12, color: '#b45309', fontWeight: 700 }}>kWh available today</span>
+                  </div>
+                </div>
+                <button
+                  onClick={() => navigate('/marketplace', {
+                    state: {
+                      openListModal: true,
+                      prefillUnits: Number(unusedEnergyKwh.toFixed(2))
+                    }
+                  })}
+                  className="gradient-btn"
+                  style={{ fontSize: 12, padding: '10px 20px', whiteSpace: 'nowrap' }}
+                >
+                  <span style={{ fontSize: 14 }}>💰</span> Sell Now
+                </button>
+              </div>
+            )}
+
+            {/* ── IES Identity Badge ── */}
+            {iesId && (
+              <div style={{ marginTop: 14, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <div style={{ background: 'linear-gradient(135deg,rgba(34,197,94,0.1),rgba(22,163,74,0.08))', border: '1px solid rgba(34,197,94,0.25)', borderRadius: 8, padding: '5px 12px', display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <div style={{ width: 7, height: 7, borderRadius: '50%', background: '#22c55e' }} />
+                  <span style={{ fontSize: 11, color: '#15803d', fontWeight: 700, fontFamily: 'monospace', letterSpacing: 0.5 }}>{iesId}</span>
+                  <span style={{ fontSize: 10, color: '#16a34a', fontWeight: 600 }}>· Aadhaar Verified</span>
+                </div>
+                <button
+                  onClick={() => navigate('/marketplace')}
+                  style={{ background: 'linear-gradient(135deg,#22c55e,#16a34a)', color: '#fff', border: 'none', borderRadius: 8, padding: '5px 14px', fontSize: 11, fontWeight: 800, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}
+                >
+                  ⚡ P2P Trade
+                </button>
+              </div>
+            )}
           </div>
         </div>
 

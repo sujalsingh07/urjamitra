@@ -1,56 +1,48 @@
 #!/bin/bash
+# ─────────────────────────────────────────────────────────────────────────────
+#  Urjamitra — One-command startup (runs backend + frontend together)
+#  Usage: chmod +x start.sh && ./start.sh
+# ─────────────────────────────────────────────────────────────────────────────
+GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; BLUE='\033[0;34m'; NC='\033[0m'
 
-# Urjamitra Project Startup Script
-# This script starts MongoDB, Backend, and Frontend automatically
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-echo "🚀 Starting Urjamitra Project..."
+echo ""
+echo -e "${YELLOW}⚡ Urjamitra P2P Energy Marketplace${NC}"
+echo ""
 
-# Color codes for output
-GREEN='\033[0;32m'
-BLUE='\033[0;34m'
-YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+# Install deps
+echo -e "${BLUE}📦 Installing backend dependencies...${NC}"
+cd "$ROOT/backend" && npm install --legacy-peer-deps --silent
+echo -e "${GREEN}✅ Backend ready${NC}"
 
-# Create MongoDB data directory if it doesn't exist
-mkdir -p ~/mongodb_data
+echo -e "${BLUE}📦 Installing frontend dependencies...${NC}"
+cd "$ROOT/frontend" && npm install --legacy-peer-deps --silent
+echo -e "${GREEN}✅ Frontend ready${NC}"
 
-# Start MongoDB
-echo -e "${BLUE}📦 Starting MongoDB...${NC}"
-mongod --dbpath ~/mongodb_data > ~/mongodb.log 2>&1 &
-MONGODB_PID=$!
-echo -e "${GREEN}✓ MongoDB started (PID: $MONGODB_PID)${NC}"
+echo ""
+echo -e "${BLUE}🚀 Starting servers...${NC}"
 
-# Wait for MongoDB to be ready
-sleep 2
-
-# Start Backend
-echo -e "${BLUE}⚙️  Starting Backend Server...${NC}"
-cd "$(dirname "$0")/backend"
-npm run dev > ~/backend.log 2>&1 &
+# Start backend
+cd "$ROOT/backend" && node server.js &
 BACKEND_PID=$!
-echo -e "${GREEN}✓ Backend started (PID: $BACKEND_PID)${NC}"
+sleep 3
 
-# Wait for backend to start
-sleep 2
-
-# Start Frontend
-echo -e "${BLUE}🎨 Starting Frontend Server...${NC}"
-cd "$(dirname "$0")/frontend"
-npm start > ~/frontend.log 2>&1 &
+# Start frontend
+cd "$ROOT/frontend" && BROWSER=none npm start &
 FRONTEND_PID=$!
-echo -e "${GREEN}✓ Frontend started (PID: $FRONTEND_PID)${NC}"
+sleep 4
 
 echo ""
-echo -e "${GREEN}✅ All services started!${NC}"
+echo -e "${GREEN}╔══════════════════════════════════════════════════╗${NC}"
+echo -e "${GREEN}║  ✅  Both servers running!                        ║${NC}"
+echo -e "${GREEN}║  Frontend  →  http://localhost:3000              ║${NC}"
+echo -e "${GREEN}║  Backend   →  http://localhost:5001              ║${NC}"
+echo -e "${GREEN}╠══════════════════════════════════════════════════╣${NC}"
+echo -e "${GREEN}║  Scroll down on login page → 🎬 Launch Demo Mode ║${NC}"
+echo -e "${GREEN}╚══════════════════════════════════════════════════╝${NC}"
 echo ""
-echo -e "${YELLOW}Access Your Application:${NC}"
-echo -e "  Frontend:  ${BLUE}http://localhost:3000${NC}"
-echo -e "  Backend:   ${BLUE}http://localhost:5001${NC}"
-echo -e "  MongoDB:   ${BLUE}localhost:27017${NC}"
-echo ""
-echo -e "${YELLOW}Logs:${NC}"
-echo "  MongoDB:  ~/mongodb.log"
-echo "  Backend:  ~/backend.log"
-echo "  Frontend: ~/frontend.log"
-echo ""
-echo -e "${YELLOW}To stop all services, run:${NC} kill $MONGODB_PID $BACKEND_PID $FRONTEND_PID"
+echo -e "Press ${RED}Ctrl+C${NC} to stop."
+
+trap "kill $BACKEND_PID $FRONTEND_PID 2>/dev/null; exit 0" SIGINT SIGTERM
+wait

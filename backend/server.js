@@ -1,172 +1,154 @@
-const express = require("express");
-const http = require("http");
+const express    = require("express");
+const http       = require("http");
 const { Server } = require("socket.io");
-const mongoose = require("mongoose");
-const cors = require("cors");
+const mongoose   = require("mongoose");
+const cors       = require("cors");
+const path       = require("path");
+const fs         = require("fs");
 require("dotenv").config();
 
-// Load routes carefully
-let authRoutes;
-let userRoutes;
-let listingRoutes;
-let transactionRoutes;
-let messageRoutes;
-try {
-  authRoutes = require("./routes/authRoutes");
-  console.log("✅ authRoutes loaded");
-} catch (err) {
-  console.error("❌ Error loading authRoutes:", err.message);
+// ── Auto-create .env if missing ───────────────────────────────────────────────
+const envPath = path.join(__dirname, ".env");
+if (!fs.existsSync(envPath)) {
+  fs.writeFileSync(envPath, "PORT=5001\nJWT_SECRET=urjamitra_demo_secret_key_2024\nMONGODB_URI=\n");
+  require("dotenv").config();
 }
 
-try {
-  userRoutes = require("./routes/userRoutes");
-  console.log("✅ userRoutes loaded");
-} catch (err) {
-  console.error("❌ Error loading userRoutes:", err.message);
+// ── Ensure JWT_SECRET always has a value ──────────────────────────────────────
+if (!process.env.JWT_SECRET) {
+  process.env.JWT_SECRET = "urjamitra_demo_secret_key_2024";
 }
 
-try {
-  listingRoutes = require("./routes/listingRoutes");
-  console.log("✅ listingRoutes loaded");
-} catch (err) {
-  console.error("❌ Error loading listingRoutes:", err.message);
-}
+// ── Services ──────────────────────────────────────────────────────────────────
+const smartMeter = require("./services/smartMeterSimulator");
 
-try {
-  messageRoutes = require("./routes/messageRoutes");
-  console.log("✅ messageRoutes loaded");
-} catch (err) {
-  console.error("❌ Error loading messageRoutes:", err.message);
-}
+// ── Routes ────────────────────────────────────────────────────────────────────
+const tryLoad = (name, p) => {
+  try   { const m = require(p); console.log(`✅ ${name}`); return m; }
+  catch (e) { console.error(`❌ ${name}: ${e.message}`); return null; }
+};
 
-try {
-  transactionRoutes = require("./routes/transactionRoutes");
-  console.log("✅ transactionRoutes loaded");
-} catch (err) {
-  console.error("❌ Error loading transactionRoutes:", err.message);
-}
+const authRoutes        = tryLoad("authRoutes",        "./routes/authRoutes");
+const userRoutes        = tryLoad("userRoutes",        "./routes/userRoutes");
+const listingRoutes     = tryLoad("listingRoutes",     "./routes/listingRoutes");
+const transactionRoutes = tryLoad("transactionRoutes", "./routes/transactionRoutes");
+const messageRoutes     = tryLoad("messageRoutes",     "./routes/messageRoutes");
+const iesRoutes         = tryLoad("iesRoutes",         "./routes/iesRoutes");
+const demoRoutes        = tryLoad("demoRoutes",        "./routes/demoRoutes");
 
-const app = express();
+// ── App ───────────────────────────────────────────────────────────────────────
+const app    = express();
 const server = http.createServer(app);
-const io = new Server(server, {
-  cors: {
-    origin: "*", // Adjust depending on frontend URL
-    methods: ["GET", "POST"]
-  }
-});
+const io     = new Server(server, { cors: { origin: "*", methods: ["GET","POST","PUT","DELETE"] } });
 
-// Middleware
-app.use(cors());
+app.set("io", io);
+app.use(cors({ origin: "*" }));
 app.use(express.json());
+app.use((req, _, next) => { console.log(`📨 ${req.method} ${req.path}`); next(); });
 
-// Debug middleware
-app.use((req, res, next) => {
-  console.log(`📨 Incoming: ${req.method} ${req.path}`);
-  next();
-});
+app.get("/",      (_, res) => res.json({ message: "⚡ Urjamitra P2P Energy Marketplace", status: "ok" }));
+app.get("/health",(_, res) => res.json({ status: "ok", timestamp: new Date().toISOString() }));
 
-// Routes
-app.get("/", (req, res) => {
-  console.log("Handling GET /");
-  res.json({
-    message: "⚡ Urjamitra Backend is Running!",
-    status: "success"
-  });
-});
+if (authRoutes)        app.use("/api/auth",        authRoutes);
+if (userRoutes)        app.use("/api/users",        userRoutes);
+if (listingRoutes)     app.use("/api/listings",     listingRoutes);
+if (transactionRoutes) app.use("/api/transactions", transactionRoutes);
+if (messageRoutes)     app.use("/api/messages",     messageRoutes);
+if (iesRoutes)         app.use("/api/ies",          iesRoutes);
+if (demoRoutes)        app.use("/api/auth",         demoRoutes);
 
-if (authRoutes) {
-  app.use("/api/auth", authRoutes);
-}
-
-if (userRoutes) {
-  app.use("/api/users", userRoutes);
-}
-
-if (listingRoutes) {
-  app.use("/api/listings", listingRoutes);
-}
-
-if (transactionRoutes) {
-  app.use("/api/transactions", transactionRoutes);
-}
-
-if (messageRoutes) {
-  app.use("/api/messages", messageRoutes);
-}
-
-// Socket.io Setup
-const Message = require("./models/Message"); // required for saving
-// Map to keep track of user sockets: { userId: socketId }
+// ── Socket.IO ─────────────────────────────────────────────────────────────────
+const Message     = require("./models/Message");
 const userSockets = new Map();
 
 io.on("connection", (socket) => {
-  console.log("⚡ New Socket Connection:", socket.id);
+  console.log("⚡ Socket connected:", socket.id);
 
   socket.on("register", (userId) => {
-    if (userId) {
-      userSockets.set(userId, socket.id);
-      console.log(`User ${userId} registered with socket ${socket.id}`);
-      io.emit("offlineStatus", Array.from(userSockets.keys()));
+    if (!userId) return;
+    userSockets.set(userId, socket.id);
+    socket.join(`user:${userId}`);
+    if (!smartMeter.getMeterState(userId)) {
+      const meterId = `MTR-${userId.toString().substring(0,8).toUpperCase()}-99`;
+      smartMeter.registerMeter(userId, meterId, false);
     }
+    io.emit("offlineStatus", Array.from(userSockets.keys()));
+    const s = smartMeter.getMeterState(userId);
+    if (s) socket.emit("telemetry:init", { meters: { [userId]: s } });
+  });
+
+  socket.on("meter:setProsumer", ({ userId, generationKw, consumptionKw }) => {
+    if (!userId) return;
+    if (!smartMeter.getMeterState(userId)) {
+      smartMeter.registerMeter(userId, `MTR-${userId.substring(0,8).toUpperCase()}-99`, true);
+    }
+    smartMeter.seedMeterForDemo(userId, generationKw || 8, consumptionKw || 3);
   });
 
   socket.on("sendMessage", async (data) => {
     try {
       const { senderId, receiverId, content } = data;
-      // Save message to database
-      const newMessage = new Message({ senderId, receiverId, content });
-      await newMessage.save();
-
-      // Send to receiver if online
-      const receiverSocketId = userSockets.get(receiverId);
-      if (receiverSocketId) {
-        io.to(receiverSocketId).emit("receiveMessage", newMessage);
-      }
-      
-      // Also emit back to sender so they know it was processed successfully
-      socket.emit("messageSent", newMessage);
-
-    } catch (err) {
-      console.error("Socket send message error:", err);
-    }
+      const msg = new Message({ senderId, receiverId, content });
+      await msg.save();
+      const rid = userSockets.get(receiverId);
+      if (rid) io.to(rid).emit("receiveMessage", msg);
+      socket.emit("messageSent", msg);
+    } catch (err) { console.error("msg error:", err); }
   });
 
   socket.on("userTyping", (data) => {
-     const receiverSocketId = userSockets.get(data.receiverId);
-     if (receiverSocketId) {
-         io.to(receiverSocketId).emit("userTyping", { senderId: data.senderId });
-     }
+    const rid = userSockets.get(data.receiverId);
+    if (rid) io.to(rid).emit("userTyping", { senderId: data.senderId });
   });
 
   socket.on("disconnect", () => {
-    console.log("Socket Disconnected:", socket.id);
-    let disconnectedUserId = null;
-    for (const [userId, socketId] of userSockets.entries()) {
-      if (socketId === socket.id) {
-        disconnectedUserId = userId;
-        userSockets.delete(userId);
-        break;
-      }
+    for (const [uid, sid] of userSockets.entries()) {
+      if (sid === socket.id) { userSockets.delete(uid); break; }
     }
-    if (disconnectedUserId) {
-        io.emit("offlineStatus", Array.from(userSockets.keys()));
-    }
+    io.emit("offlineStatus", Array.from(userSockets.keys()));
   });
 });
 
-/* ============================
-   DATABASE CONNECTION
-============================ */
+// ── MongoDB: auto-use in-memory DB if no URI provided ────────────────────────
+async function connectDB() {
+  const uri = process.env.MONGODB_URI && process.env.MONGODB_URI.trim();
 
-mongoose.connect(process.env.MONGODB_URI)
+  if (uri) {
+    // Use provided URI (Atlas or local)
+    console.log("🔌 Connecting to MongoDB...");
+    await mongoose.connect(uri);
+    console.log("✅ MongoDB connected (external)");
+  } else {
+    // Zero-config: spin up an in-memory MongoDB automatically
+    console.log("🔌 No MONGODB_URI found — starting built-in in-memory database...");
+    const { MongoMemoryServer } = require("mongodb-memory-server");
+    const mongod = await MongoMemoryServer.create();
+    const memUri = mongod.getUri();
+    await mongoose.connect(memUri);
+    console.log("✅ MongoDB connected (in-memory, zero config — data resets on restart)");
+  }
+}
+
+// ── Start ─────────────────────────────────────────────────────────────────────
+connectDB()
   .then(() => {
-    console.log("✅ MongoDB Connected Successfully");
+    smartMeter.startSimulator(io);
 
-    server.listen(process.env.PORT, () => {
-      console.log(`⚡ Urjamitra server running on port ${process.env.PORT}`);
+    const PORT = process.env.PORT || 5001;
+    server.listen(PORT, () => {
+      console.log("");
+      console.log("╔══════════════════════════════════════════════════╗");
+      console.log("║   ⚡  Urjamitra Backend is LIVE!                  ║");
+      console.log(`║   API    →  http://localhost:${PORT}/api           ║`);
+      console.log(`║   Socket →  ws://localhost:${PORT}                ║`);
+      console.log("╠══════════════════════════════════════════════════╣");
+      console.log("║   Open http://localhost:3000                     ║");
+      console.log("║   Scroll down → 🎬 Launch Demo Mode              ║");
+      console.log("╚══════════════════════════════════════════════════╝");
+      console.log("");
     });
-
   })
-  .catch((error) => {
-    console.log("❌ MongoDB Connection Error:", error);
+  .catch((err) => {
+    console.error("❌ Failed to start:", err.message);
+    process.exit(1);
   });
