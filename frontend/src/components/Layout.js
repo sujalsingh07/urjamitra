@@ -294,6 +294,13 @@ export default function Layout({ children }) {
               <p style={{ margin: 0, fontSize: 12, color: '#92400e' }}>
                 Consent: <strong style={{ fontFamily: 'monospace' }}>{iesConsent.consentId}</strong>
               </p>
+              {Number.isFinite(Number(iesConsent.offeredPricePerUnit)) && (
+                <p style={{ margin: '4px 0 0', fontSize: 12, color: '#92400e' }}>
+                  Offer: <strong>Rs.{Number(iesConsent.offeredPricePerUnit).toFixed(2)}/kWh</strong>
+                  {Number.isFinite(Number(iesConsent.listingPricePerUnit)) ? ` (listed Rs.${Number(iesConsent.listingPricePerUnit).toFixed(2)})` : ''}
+                  {Number.isFinite(Number(iesConsent.units)) ? ` • Total Rs.${(Number(iesConsent.units) * Number(iesConsent.offeredPricePerUnit)).toFixed(2)}` : ''}
+                </p>
+              )}
             </div>
             {iesConsentError && (
               <p style={{ margin: '0 0 10px', fontSize: 12, color: '#b91c1c', fontWeight: 700 }}>{iesConsentError}</p>

@@ -5,6 +5,8 @@ const User = require('../models/user');
 const smartMeter = require('../services/smartMeterSimulator');
 const jwt = require('jsonwebtoken');
 
+const MIN_MARKETPLACE_UNITS = 0.01;
+
 // Middleware to verify token
 const authenticateToken = (req, res, next) => {
   const token = req.headers['authorization']?.split(' ')[1];
@@ -92,6 +94,12 @@ router.post('/create', authenticateToken, async (req, res) => {
 // Get all available listings in the user's city/area
 router.get('/all', authenticateToken, async (req, res) => {
   try {
+    // Self-heal stale records so 0-unit listings are never treated as available.
+    await Listing.updateMany(
+      { available: true, units: { $lt: MIN_MARKETPLACE_UNITS } },
+      { $set: { available: false } }
+    );
+
     const currentUser = await User.findById(req.userId).select('address');
     if (!currentUser?.address) {
       return res.json({
@@ -103,6 +111,7 @@ router.get('/all', authenticateToken, async (req, res) => {
 
     const listings = await Listing.find({
       available: true,
+      units: { $gte: MIN_MARKETPLACE_UNITS },
       $or: [
         { expiresAt: { $gt: new Date() } },
         { expiresAt: null },

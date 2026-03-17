@@ -72,6 +72,8 @@ const CSS = `
   input[type=number]::-webkit-inner-spin-button { -webkit-appearance:none; }
 `;
 
+const MIN_MARKETPLACE_UNITS = 0.01;
+
 export default function Marketplace() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -88,6 +90,7 @@ export default function Marketplace() {
   const [done, setDone] = useState(false);
   const [buyModal, setBuyModal] = useState(null);   // listing object
   const [buyUnits, setBuyUnits] = useState('');
+  const [buyPricePerUnit, setBuyPricePerUnit] = useState(0);
   const [buyLoading, setBuyLoading] = useState(false);
   const [buyResult, setBuyResult] = useState(null); // { status, message }
   const [tradeLogs, setTradeLogs] = useState([]);
@@ -277,6 +280,8 @@ export default function Marketplace() {
     return raw;
   };
 
+  const isListingActive = (listing) => Boolean(listing?.available) && Number(listing?.units) >= MIN_MARKETPLACE_UNITS;
+
   const mapTxErrorMessage = (res) => {
     const code = res?.code;
     if (code === 'LISTING_UNAVAILABLE') return 'This listing is no longer available or has fewer units now.';
@@ -385,6 +390,7 @@ export default function Marketplace() {
   const openBuyModal = (listing) => {
     setBuyModal(listing);
     setBuyUnits('');
+    setBuyPricePerUnit(Number(listing?.pricePerUnit || 0));
     setBuyResult(null);
     setTradeLogs([]);
     setActiveTradeId(null);
@@ -396,7 +402,9 @@ export default function Marketplace() {
   };
 
   const handleRequestTransaction = async () => {
-    if (!buyModal || !buyUnits || parseFloat(buyUnits) <= 0) return;
+    const requestedUnits = parseFloat(buyUnits);
+    const requestedPrice = Number(buyPricePerUnit);
+    if (!buyModal || !buyUnits || requestedUnits <= 0 || !Number.isFinite(requestedPrice) || requestedPrice <= 0) return;
     setBuyLoading(true);
     setBuyResult(null);
     setTradeLogs([]);
@@ -404,14 +412,14 @@ export default function Marketplace() {
     setPendingConsent(null);
     setTradePhase('initiating');
     try {
-      const res = await api.initiateIESTrade(buyModal._id, parseFloat(buyUnits));
+      const res = await api.initiateIESTrade(buyModal._id, requestedUnits, Number(requestedPrice.toFixed(2)));
       if (res.success) {
         setActiveTradeId(res.tradeId);
         setTradePhase('awaiting_consent');
         setBuyResult({ status: 'ok', message: 'Trade initiated. Waiting for consent and DISCOM verification...' });
         setTradeLogs([
           { time: new Date().toISOString(), level: 'info', event: `[IES] Trade started (${res.tradeId})` },
-          { time: new Date().toISOString(), level: 'info', event: `[IES] Requesting seller consent for ${buyUnits} kWh...` },
+          { time: new Date().toISOString(), level: 'info', event: `[IES] Requesting seller consent for ${buyUnits} kWh at Rs.${Number(requestedPrice).toFixed(2)}/kWh...` },
         ]);
       } else {
         setTradePhase('failed');
@@ -532,11 +540,11 @@ export default function Marketplace() {
   const baseListings = viewMode === 'my' ? myListings : allNeighborListings;
 
   const filtered = baseListings
-    .filter(l => filter === 'available' ? l.available : true)
+    .filter(l => filter === 'available' ? isListingActive(l) : true)
     .sort((a, b) => filter === 'cheap' ? a.pricePerUnit - b.pricePerUnit : 0);
 
-  const neighborAvailableCount = allNeighborListings.filter((l) => l.available).length;
-  const myAvailableCount = myListings.filter((l) => l.available).length;
+  const neighborAvailableCount = allNeighborListings.filter((l) => isListingActive(l)).length;
+  const myAvailableCount = myListings.filter((l) => isListingActive(l)).length;
 
   return (
     <div style={{
@@ -636,9 +644,12 @@ export default function Marketplace() {
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             {filtered.map((listing, idx) => (
+              (() => {
+                const listingIsActive = isListingActive(listing);
+                return (
               <div key={listing._id} className="um-card" style={{
                 borderRadius: 24, padding: '24px',
-                opacity: listing.available ? 1 : 0.6,
+                opacity: listingIsActive ? 1 : 0.6,
                 animation: `fadeUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) ${0.3 + (idx * 0.05)}s both`
               }}>
                 <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 20 }}>
@@ -673,7 +684,7 @@ export default function Marketplace() {
                       }}>
                         Remove
                       </button>
-                    ) : listing.available ? (
+                    ) : listingIsActive ? (
                       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
                         <button onClick={() => navigate('/messages', { state: { autoOpenUser: listing.seller } })} style={{ background: '#fffbeb', color: '#d97706', border: '1px solid #fde68a', borderRadius: 12, padding: '8px 16px', fontWeight: 800, fontSize: 13, cursor: 'pointer', transition: 'all 0.2s', boxShadow: '0 4px 12px rgba(245,158,11,0.1)' }}>
                           💬 Ask
@@ -692,7 +703,7 @@ export default function Marketplace() {
                     <span style={{ fontSize: 13, color: '#92400e', fontWeight: 600 }}>💰 Max: <strong style={{ color: '#15803d', fontSize: 14 }}>₹{(listing.units * listing.pricePerUnit).toFixed(0)}</strong></span>
                     <span style={{ fontSize: 13, color: '#92400e', fontWeight: 600 }}>🌿 Saves <strong style={{ color: '#16a34a', fontSize: 14 }}>{(listing.units * 0.8).toFixed(1)}</strong> kg CO₂</span>
                   </div>
-                  {listing.available && (
+                  {listingIsActive && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                       <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#16a34a', animation: 'blink 2.5s infinite', boxShadow: '0 0 6px rgba(22,163,74,0.4)' }} />
                       <span style={{ fontSize: 12, color: '#15803d', fontWeight: 800 }}>Available Now</span>
@@ -700,6 +711,8 @@ export default function Marketplace() {
                   )}
                 </div>
               </div>
+                );
+              })()
             ))}
           </div>
         )
@@ -772,11 +785,6 @@ export default function Marketplace() {
               <div style={{ textAlign: 'center', padding: '24px 0' }}>
                 <div style={{ fontSize: 48, marginBottom: 12 }}>{buyResult.status === 'ok' ? '✅' : '❌'}</div>
                 <p style={{ fontWeight: 800, fontSize: 16, color: buyResult.status === 'ok' ? '#15803d' : '#b91c1c', margin: 0 }}>{buyResult.message}</p>
-                {buyResult.status === 'err' && (
-                  <button onClick={() => setBuyResult(null)} style={{ marginTop: 14, background: '#fff7ed', border: '1px solid #fdba74', color: '#9a3412', borderRadius: 10, padding: '8px 14px', cursor: 'pointer', fontWeight: 700, fontSize: 12 }}>
-                    Try Again
-                  </button>
-                )}
               </div>
             ) : (
               <>
@@ -787,16 +795,55 @@ export default function Marketplace() {
                   <input type="number" placeholder={`Max ${formatKwh(buyModal.units)} kWh`} max={buyModal.units} min={0.1} step={0.1} value={buyUnits} onChange={e => setBuyUnits(e.target.value)} className="premium-input" />
                 </div>
 
+                {(() => {
+                  const listingPrice = Number(buyModal.pricePerUnit || 0);
+                  const minOffer = Math.max(0.5, Number((listingPrice * 0.5).toFixed(2)));
+                  const currentOffer = Number.isFinite(Number(buyPricePerUnit)) && Number(buyPricePerUnit) > 0
+                    ? Number(buyPricePerUnit)
+                    : listingPrice;
+                  const bargainPercent = listingPrice > 0
+                    ? Math.max(0, Number((((listingPrice - currentOffer) / listingPrice) * 100).toFixed(0)))
+                    : 0;
+
+                  return (
+                    <div style={{ marginBottom: 16 }}>
+                      <label style={{ fontSize: 11, fontWeight: 800, color: '#a16207', display: 'block', marginBottom: 10, textTransform: 'uppercase', letterSpacing: 1 }}>
+                        Offer price per unit (Rs/kWh)
+                      </label>
+                      <div style={{ background: 'rgba(255,251,235,0.8)', border: '1px solid #fde68a', borderRadius: 14, padding: '12px 14px' }}>
+                        <input
+                          type="range"
+                          min={minOffer}
+                          max={listingPrice}
+                          step={0.05}
+                          value={Math.min(listingPrice, Math.max(minOffer, currentOffer))}
+                          onChange={(e) => setBuyPricePerUnit(Number(e.target.value))}
+                          style={{ width: '100%', accentColor: '#ea580c' }}
+                        />
+                        <div style={{ marginTop: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                          <span style={{ fontSize: 11, color: '#92400e', fontWeight: 700 }}>Min bargain Rs.{minOffer.toFixed(2)}</span>
+                          <span style={{ fontSize: 16, color: '#15803d', fontWeight: 900 }}>Rs.{currentOffer.toFixed(2)}/kWh</span>
+                          <span style={{ fontSize: 11, color: '#92400e', fontWeight: 700 }}>Listed Rs.{listingPrice.toFixed(2)}</span>
+                        </div>
+                        <p style={{ margin: '8px 0 0', fontSize: 11, color: bargainPercent > 0 ? '#b45309' : '#15803d', fontWeight: 700 }}>
+                          {bargainPercent > 0 ? `You are requesting ${bargainPercent}% lower than listed price.` : 'You are offering the listed price.'}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })()}
+
                 {buyUnits && parseFloat(buyUnits) > 0 && (() => {
                   const requested = parseFloat(buyUnits);
-                  const total = requested * buyModal.pricePerUnit;
+                  const offeredPrice = Number(buyPricePerUnit || buyModal.pricePerUnit || 0);
+                  const total = requested * offeredPrice;
                   const overLimit = requested > buyModal.units;
                   const canAfford = walletBalance >= total;
                   const isInvalid = overLimit || !canAfford;
                   return (
                     <div style={{ background: isInvalid ? '#fff1f2' : '#f0fdf4', border: `1px solid ${isInvalid ? '#fda4af' : '#86efac'}`, borderRadius: 16, padding: '16px 20px', marginBottom: 16, animation: 'fadeUp 0.3s ease' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-                        <span style={{ fontSize: 13, color: isInvalid ? '#b91c1c' : '#15803d', fontWeight: 600 }}>{buyUnits} kWh × ₹{buyModal.pricePerUnit}</span>
+                        <span style={{ fontSize: 13, color: isInvalid ? '#b91c1c' : '#15803d', fontWeight: 600 }}>{buyUnits} kWh × Rs.{offeredPrice.toFixed(2)}</span>
                         <span style={{ fontSize: 18, fontWeight: 900, color: isInvalid ? '#b91c1c' : '#15803d' }}>₹{total.toFixed(0)}</span>
                       </div>
                       {overLimit ? (
@@ -877,9 +924,9 @@ export default function Marketplace() {
                     <button onClick={handleCancelTransactionRequest} disabled={buyLoading} style={{ flex: 1, padding: '16px', background: 'rgba(253,230,138,0.3)', color: '#92400e', border: '1px solid rgba(253,230,138,0.8)', borderRadius: 16, fontWeight: 800, fontSize: 15, cursor: 'pointer', fontFamily: 'inherit', opacity: buyLoading ? 0.7 : 1 }}>{activeTradeId ? 'Cancel Request' : 'Cancel'}</button>
                     <button
                       onClick={handleRequestTransaction}
-                      disabled={buyLoading || activeTradeId || !buyUnits || parseFloat(buyUnits) <= 0 || parseFloat(buyUnits) > buyModal.units || walletBalance < parseFloat(buyUnits) * buyModal.pricePerUnit}
+                      disabled={buyLoading || activeTradeId || !buyUnits || parseFloat(buyUnits) <= 0 || parseFloat(buyUnits) > buyModal.units || walletBalance < parseFloat(buyUnits) * Number(buyPricePerUnit || buyModal.pricePerUnit || 0)}
                       className="gradient-btn"
-                      style={{ flex: 2, padding: '16px', borderRadius: 16, fontSize: 15, opacity: (activeTradeId || !buyUnits || parseFloat(buyUnits) <= 0 || parseFloat(buyUnits) > buyModal.units || walletBalance < parseFloat(buyUnits) * buyModal.pricePerUnit) ? 0.5 : 1 }}>
+                      style={{ flex: 2, padding: '16px', borderRadius: 16, fontSize: 15, opacity: (activeTradeId || !buyUnits || parseFloat(buyUnits) <= 0 || parseFloat(buyUnits) > buyModal.units || walletBalance < parseFloat(buyUnits) * Number(buyPricePerUnit || buyModal.pricePerUnit || 0)) ? 0.5 : 1 }}>
                       {buyLoading ? 'Starting IES Flow…' : activeTradeId ? 'IES Flow Running…' : 'Initiate IES Trade ⚡'}
                     </button>
                   </div>
@@ -906,6 +953,12 @@ export default function Marketplace() {
               <p style={{ margin: 0, fontSize: 12, color: '#92400e' }}>
                 Units requested: <strong>{pendingConsent.units} kWh</strong>
               </p>
+              {Number.isFinite(Number(pendingConsent.offeredPricePerUnit)) && (
+                <p style={{ margin: '4px 0 0', fontSize: 12, color: '#92400e' }}>
+                  Offered price: <strong>Rs.{Number(pendingConsent.offeredPricePerUnit).toFixed(2)}/kWh</strong>
+                  {Number.isFinite(Number(pendingConsent.listingPricePerUnit)) ? ` (listed Rs.${Number(pendingConsent.listingPricePerUnit).toFixed(2)})` : ''}
+                </p>
+              )}
             </div>
             {consentNotice ? (
               <>

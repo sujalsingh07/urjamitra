@@ -405,9 +405,13 @@ export const api = {
     catch (e) { return handleError(e); }
   },
 
-  initiateIESTrade: async (listingId, units) => {
+  initiateIESTrade: async (listingId, units, offeredPricePerUnit) => {
     try {
-      const r = await apiClient.post('/ies/trade/initiate', { listingId, units });
+      const payload = { listingId, units };
+      if (offeredPricePerUnit !== undefined && offeredPricePerUnit !== null) {
+        payload.offeredPricePerUnit = offeredPricePerUnit;
+      }
+      const r = await apiClient.post('/ies/trade/initiate', payload);
       return r.data;
     } catch (e) { return handleError(e); }
   },

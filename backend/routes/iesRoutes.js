@@ -108,10 +108,11 @@ router.get('/telemetry/all', authenticateToken, (req, res) => {
  */
 router.post('/trade/initiate', authenticateToken, async (req, res) => {
   try {
-    const { listingId, units } = req.body;
+    const { listingId, units, offeredPricePerUnit } = req.body;
     const buyerId = req.userId;
+    const requestedUnits = Number(units);
 
-    if (!listingId || !units || units <= 0) {
+    if (!listingId || !Number.isFinite(requestedUnits) || requestedUnits <= 0) {
       return res.status(400).json({ success: false, message: 'listingId and units required' });
     }
 
@@ -120,7 +121,7 @@ router.post('/trade/initiate', authenticateToken, async (req, res) => {
       return res.status(404).json({ success: false, message: 'Listing not found or unavailable' });
     }
 
-    if (listing.units < units) {
+    if (listing.units < requestedUnits) {
       return res.status(400).json({ success: false, message: `Only ${listing.units} kWh available` });
     }
 
@@ -130,9 +131,23 @@ router.post('/trade/initiate', authenticateToken, async (req, res) => {
       return res.status(400).json({ success: false, message: 'Cannot buy your own listing' });
     }
 
+    const listingPrice = Number(listing.pricePerUnit);
+    let negotiatedPrice = listingPrice;
+    const hasNegotiatedPrice = offeredPricePerUnit !== undefined && offeredPricePerUnit !== null && offeredPricePerUnit !== '';
+    if (hasNegotiatedPrice) {
+      const parsedNegotiatedPrice = Number(offeredPricePerUnit);
+      if (!Number.isFinite(parsedNegotiatedPrice) || parsedNegotiatedPrice <= 0) {
+        return res.status(400).json({ success: false, message: 'offeredPricePerUnit must be a positive number' });
+      }
+      if (parsedNegotiatedPrice > listingPrice) {
+        return res.status(400).json({ success: false, message: 'Offer price cannot be above listing price' });
+      }
+      negotiatedPrice = Number(parsedNegotiatedPrice.toFixed(2));
+    }
+
     // Check buyer wallet
     const buyer = await User.findById(buyerId).select('wallet name');
-    const totalCost = units * listing.pricePerUnit;
+    const totalCost = Number((requestedUnits * negotiatedPrice).toFixed(2));
     if (buyer.wallet < totalCost) {
       return res.status(400).json({ success: false, message: `Insufficient balance. Need ₹${totalCost}, have ₹${buyer.wallet}` });
     }
@@ -149,7 +164,7 @@ router.post('/trade/initiate', authenticateToken, async (req, res) => {
 
     // Initiate IES consent flow
     const { consentId, tradeRecord } = ies.initiateTradeRequest(
-      tradeId, sellerId, buyerId, units, listingId, req.io
+      tradeId, sellerId, buyerId, requestedUnits, listingId, negotiatedPrice, listingPrice, req.io
     );
 
     // Log IES message to buyer's socket room
@@ -157,7 +172,8 @@ router.post('/trade/initiate', authenticateToken, async (req, res) => {
       req.io.to(`user:${buyerId}`).emit('ies:log', {
         tradeId,
         logs: [
-          { time: new Date().toISOString(), event: `[IES] Received Trade Request: ${listing.seller.name} → ${buyer.name} (${units} Units)`, level: 'info' },
+          { time: new Date().toISOString(), event: `[IES] Received Trade Request: ${listing.seller.name} → ${buyer.name} (${requestedUnits} Units)`, level: 'info' },
+          { time: new Date().toISOString(), event: `[IES] Offer price: Rs.${negotiatedPrice}/kWh (listed Rs.${listingPrice}/kWh)`, level: 'info' },
           { time: new Date().toISOString(), event: `[IES] Requesting Data Consent from ${listing.seller.name}...`, level: 'info' }
         ]
       });
@@ -169,8 +185,9 @@ router.post('/trade/initiate', authenticateToken, async (req, res) => {
       consentId,
       sellerId: sellerId.toString(),
       sellerName: listing.seller.name,
-      units,
-      pricePerUnit: listing.pricePerUnit,
+      units: requestedUnits,
+      pricePerUnit: listingPrice,
+      offeredPricePerUnit: negotiatedPrice,
       totalCost,
       message: `Trade request sent. Waiting for ${listing.seller.name} to approve...`
     });
@@ -195,7 +212,11 @@ router.post('/trade/:tradeId/cancel', authenticateToken, async (req, res) => {
 
     const trade = result.trade;
     const listing = await Listing.findById(trade.listingId).select('pricePerUnit');
-    const pricePerUnit = Number(listing?.pricePerUnit || 0);
+    const pricePerUnit = Number(trade.offeredPricePerUnit || 0);
+    if (!Number.isFinite(pricePerUnit) || pricePerUnit <= 0) {
+      console.warn(`⚠ Cancel: Missing offeredPricePerUnit in trade, using listing price as fallback`);
+      return res.json({ success: true, tradeId, status: 'cancelled_by_buyer', message: 'Trade request cancelled.' });
+    }
     const units = Number(trade.units || 0);
     const totalAmount = Number((units * pricePerUnit).toFixed(2));
 
@@ -276,7 +297,11 @@ router.post('/consent/:consentId/approve', authenticateToken, async (req, res) =
 
         if (!existingRejected) {
           const listing = await Listing.findById(consent.listingId).select('pricePerUnit');
-          const pricePerUnit = Number(listing?.pricePerUnit || 0);
+          const pricePerUnit = Number(consent.offeredPricePerUnit || 0);
+          if (!Number.isFinite(pricePerUnit) || pricePerUnit <= 0) {
+            console.warn(`⚠ Reject: Missing offeredPricePerUnit in consent, skipping transaction record`);
+            return res.json({ success: true, status: 'rejected', tradeId: consent.tradeId, message: 'Trade request rejected by seller.' });
+          }
           const units = Number(consent.units || 0);
           const totalAmount = Number((units * pricePerUnit).toFixed(2));
 
@@ -315,6 +340,10 @@ router.post('/consent/:consentId/approve', authenticateToken, async (req, res) =
     // If approved, trigger DISCOM verification
     if (decision === 'approve') {
       const consent = ies.consentStore.get(consentId);
+      console.log(`\n🕐 [APPROVAL INITIATED] ${consent.tradeId}`);
+      console.log(`   Consent from store - offeredPricePerUnit:`, consent.offeredPricePerUnit);
+      console.log(`   Consent from store - listingPricePerUnit:`, consent.listingPricePerUnit);
+      console.log(`   Consent from store - units:`, consent.units);
       
       setTimeout(async () => {
         try {
@@ -327,6 +356,8 @@ router.post('/consent/:consentId/approve', authenticateToken, async (req, res) =
           );
 
           if (verifyResult.success) {
+            console.log(`\n🔏 [BEFORE SETTLEMENT] ${consent.tradeId}`);
+            console.log(`   Consent offeredPricePerUnit:`, consent.offeredPricePerUnit);
             // Phase 4: Complete transaction in DB and settle funds
             await settleTradeInDB(consent.tradeId, consent, req.io);
           }
@@ -369,6 +400,11 @@ async function settleTradeInDB(tradeId, consent, io) {
     const requestedUnits = Number(consent.units);
     if (!Number.isFinite(requestedUnits) || requestedUnits <= 0) return;
 
+    console.log(`\n🔍 [SETTLEMENT START] ${tradeId}`);
+    console.log(`   Consent object keys:`, Object.keys(consent));
+    console.log(`   offeredPricePerUnit from consent:`, consent.offeredPricePerUnit, `(type: ${typeof consent.offeredPricePerUnit})`);
+    console.log(`   listingId from consent:`, consent.listingId);
+
     // Atomically reserve units at settlement time to avoid stale decrements.
     const listing = await Listing.findOneAndUpdate(
       {
@@ -390,8 +426,28 @@ async function settleTradeInDB(tradeId, consent, io) {
     }
 
     const units = requestedUnits;
-    const totalAmount = +(units * listing.pricePerUnit).toFixed(2);
+    // Ensure negotiated price is explicitly used, never fallback to listing price
+    const offeredPrice = Number(consent.offeredPricePerUnit || 0);
+    console.log(`   Listing price from DB:`, listing.pricePerUnit);
+    console.log(`   Offered price (parsed):`, offeredPrice, `(valid: ${Number.isFinite(offeredPrice) && offeredPrice > 0})`);
+    
+    if (!Number.isFinite(offeredPrice) || offeredPrice <= 0) {
+      console.error(`\n❌ [SETTLEMENT ABORT] ${tradeId}: Missing or invalid offeredPricePerUnit in consent:`, {
+        tradeId,
+        consentId: consent.consentId,
+        offeredPricePerUnit: consent.offeredPricePerUnit,
+        listingPrice: listing.pricePerUnit,
+        consentKeys: Object.keys(consent)
+      });
+      return; // Abort settlement to prevent incorrect deduction
+    }
+    const lockedPricePerUnit = offeredPrice;
+    const totalAmount = +(units * lockedPricePerUnit).toFixed(2);
     const CO2_PER_KWH = 0.82;
+
+    console.log(`   ✅ Using negotiated price: Rs.${lockedPricePerUnit}/kWh`);
+    console.log(`   Total amount to deduct: Rs.${totalAmount}`);
+    console.log(`   Units: ${units} kWh\n`);
 
     // Create transaction record
     const transaction = await Transaction.create({
@@ -399,7 +455,8 @@ async function settleTradeInDB(tradeId, consent, io) {
       buyer: consent.buyerId,
       listing: consent.listingId,
       units,
-      pricePerUnit: listing.pricePerUnit,
+      pricePerUnit: lockedPricePerUnit,
+      pricePerUnitLocked: lockedPricePerUnit,
       totalAmount,
       grossAmount: totalAmount,
       netAmount: totalAmount,
@@ -464,7 +521,8 @@ async function settleTradeInDB(tradeId, consent, io) {
         txnHash,
         transactionId: transaction._id,
         units,
-        pricePerUnit: listing.pricePerUnit,
+        pricePerUnit: lockedPricePerUnit,
+        listingPricePerUnit: Number(listing.pricePerUnit),
         totalAmount,
         remainingUnits: Math.max(0, Number(listing.units || 0)),
         sellerNewWallet: sellerUser?.wallet,

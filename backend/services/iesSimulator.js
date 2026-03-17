@@ -37,10 +37,23 @@ function getOrCreateIESId(userId, userName) {
 /**
  * Phase 1: Initiate a trade request - creates a consent request
  */
-function initiateTradeRequest(tradeId, sellerId, buyerId, units, listingId, io) {
+function initiateTradeRequest(tradeId, sellerId, buyerId, units, listingId, offeredPricePerUnit, listingPricePerUnit, io) {
   const consentId = `CONSENT-${crypto.randomBytes(6).toString('hex').toUpperCase()}`;
   const now = new Date();
   const expiresAt = new Date(now.getTime() + 5 * 60 * 1000); // 5 min to approve
+
+  // Validate prices are valid numbers
+  const validatedOfferedPrice = Number(offeredPricePerUnit || 0);
+  const validatedListingPrice = Number(listingPricePerUnit || 0);
+  
+  console.log(`\n🔥 [IES INITIATE] ${tradeId}`);
+  console.log(`   Input offeredPricePerUnit:`, offeredPricePerUnit, `(type: ${typeof offeredPricePerUnit})`);
+  console.log(`   Validated offered price:`, validatedOfferedPrice);
+  console.log(`   Validated listing price:`, validatedListingPrice);
+  
+  if (!Number.isFinite(validatedOfferedPrice) || !Number.isFinite(validatedListingPrice)) {
+    console.warn(`⚠ IES initiate: Invalid prices passed - offered: ${offeredPricePerUnit}, listing: ${listingPricePerUnit}`);
+  }
 
   const consentRecord = {
     consentId,
@@ -48,12 +61,16 @@ function initiateTradeRequest(tradeId, sellerId, buyerId, units, listingId, io) 
     sellerId: sellerId.toString(),
     buyerId: buyerId.toString(),
     units,
+    offeredPricePerUnit: validatedOfferedPrice,
+    listingPricePerUnit: validatedListingPrice,
     listingId,
     status: 'pending',
     createdAt: now,
     expiresAt,
     signature: null
   };
+  
+  console.log(`   Stored in consent: offeredPricePerUnit=${consentRecord.offeredPricePerUnit}\n`);
   
   consentStore.set(consentId, consentRecord);
 
@@ -64,6 +81,8 @@ function initiateTradeRequest(tradeId, sellerId, buyerId, units, listingId, io) 
     buyerId: buyerId.toString(),
     listingId,
     units,
+    offeredPricePerUnit,
+    listingPricePerUnit,
     status: 'awaiting_consent',
     phases: [],
     log: [],
@@ -90,8 +109,11 @@ function initiateTradeRequest(tradeId, sellerId, buyerId, units, listingId, io) 
       tradeId,
       buyerId: buyerId.toString(),
       units,
+      offeredPricePerUnit,
+      listingPricePerUnit,
+      totalCost: Number((Number(units || 0) * Number(offeredPricePerUnit || 0)).toFixed(2)),
       expiresAt: expiresAt.toISOString(),
-      message: `You have a new energy trade request for ${units} kWh. Please approve or reject.`
+      message: `You have a new energy trade request for ${units} kWh at Rs.${offeredPricePerUnit}/kWh. Please approve or reject.`
     });
 
     // Broadcast IES log to all participants
@@ -155,7 +177,7 @@ async function processConsent(consentId, sellerId, decision, io) {
   // Generate digital signature (simulated)
   const signature = crypto
     .createHash('sha256')
-    .update(`${consentId}:${sellerId}:${consent.units}:${Date.now()}`)
+    .update(`${consentId}:${sellerId}:${consent.units}:${consent.offeredPricePerUnit}:${Date.now()}`)
     .digest('hex');
 
   consent.status = 'approved';
