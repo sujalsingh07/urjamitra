@@ -61,6 +61,23 @@ export default function Transactions() {
 
   useEffect(() => { fetchTransactions(); }, []);
 
+  useEffect(() => {
+    const socket = window.__socket;
+    if (!socket) return;
+
+    const refresh = () => {
+      fetchTransactions();
+    };
+
+    socket.on('ies:settlement', refresh);
+    socket.on('ies:trade_update', refresh);
+
+    return () => {
+      socket.off('ies:settlement', refresh);
+      socket.off('ies:trade_update', refresh);
+    };
+  }, []);
+
   const fetchTransactions = async () => {
     try {
       setLoading(true);

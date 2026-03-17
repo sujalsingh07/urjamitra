@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { MapContainer, TileLayer, Marker, Popup, Circle, useMap } from "react-leaflet";
 import L from "leaflet";
 import { api } from "../services/api";
@@ -82,21 +83,36 @@ function AutoFitBounds({ yourLocation, sellerMarkers }) {
   const map = useMap();
 
   useEffect(() => {
+    if (!map || !map._loaded || !map.getPane('mapPane')) return;
+
     const points = [yourLocation, ...sellerMarkers.map((s) => s.position)]
       .filter((p) => Array.isArray(p) && isLikelyIndiaCoordinate(p[0], p[1]));
 
     if (points.length <= 1) return;
 
-    map.fitBounds(points, {
-      padding: [36, 36],
-      maxZoom: 14,
+    let frameId = null;
+    frameId = window.requestAnimationFrame(() => {
+      try {
+        map.fitBounds(points, {
+          padding: [36, 36],
+          maxZoom: 14,
+          animate: false,
+        });
+      } catch {
+        // Ignore transient map lifecycle errors during route transitions/HMR.
+      }
     });
+
+    return () => {
+      if (frameId) window.cancelAnimationFrame(frameId);
+    };
   }, [map, yourLocation, sellerMarkers]);
 
   return null;
 }
 
 function MapView() {
+  const navigate = useNavigate();
   const [showSuccess, setShowSuccess] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [userProfile, setUserProfile] = useState(null);
@@ -243,9 +259,18 @@ function MapView() {
     };
   }, [loadSellerMarkers, loadUserProfile]);
 
-  const handleConnect = () => {
-    setShowSuccess(true);
-    setTimeout(() => setShowSuccess(false), 3000);
+  const handleConnect = (seller) => {
+    if (!seller?.id) {
+      setShowSuccess(true);
+      setTimeout(() => setShowSuccess(false), 3000);
+      return;
+    }
+
+    navigate('/marketplace', {
+      state: {
+        openListingId: seller.id,
+      },
+    });
   };
 
   const savedLatitude = userProfile?.location?.latitude;
@@ -289,7 +314,7 @@ function MapView() {
 
           <div className="um-card" style={{ borderRadius: 24, overflow: 'hidden', padding: 8, boxShadow: '0 16px 40px rgba(180,130,0,0.12)', marginBottom: 24 }}>
             <div style={{ borderRadius: 16, overflow: 'hidden', border: '1px solid rgba(253,230,138,0.5)' }}>
-              <MapContainer key={yourLocation.join('-')} center={yourLocation} zoom={13} style={{ height: "500px", width: "100%", zIndex: 1 }}>
+              <MapContainer center={yourLocation} zoom={13} style={{ height: "500px", width: "100%", zIndex: 1 }}>
                 <TileLayer
                   attribution="&copy; OpenStreetMap contributors"
                   url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
@@ -334,7 +359,7 @@ function MapView() {
                           </>
                         </div>
 
-                        <button onClick={handleConnect} className="gradient-btn" style={{ width: '100%', padding: '12px' }}>
+                        <button onClick={() => handleConnect(seller)} className="gradient-btn" style={{ width: '100%', padding: '12px' }}>
                           Connect ⚡
                         </button>
                       </div>

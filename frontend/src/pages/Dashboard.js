@@ -115,15 +115,34 @@ const fallbackWeekly = [
 const formatSystemLocation = (address, location) => {
   const rawAddress = String(address || '').trim();
   if (rawAddress && rawAddress.toLowerCase() !== 'campus') {
-    const parts = rawAddress.split(',').map((p) => p.trim()).filter(Boolean);
+    const parts = rawAddress
+      .split(',')
+      .map((p) => p.trim())
+      .filter((p) => p && !/\d/.test(p));
+
     if (parts.length >= 2) {
-      // Prefer the last meaningful two chunks (usually city/state for long geocoded addresses)
-      let second = parts[parts.length - 2];
-      let first = parts[parts.length - 3] || parts[0];
-      if (/\d/.test(second) && parts.length >= 3) second = parts[parts.length - 3];
-      if (/\d/.test(first) && parts.length >= 4) first = parts[parts.length - 4];
-      return `${first}, ${second}`;
+      const normalized = parts.map((p) => p.toLowerCase());
+      let right = parts[parts.length - 1];
+      let left = null;
+
+      for (let i = parts.length - 2; i >= 0; i -= 1) {
+        if (normalized[i] !== normalized[parts.length - 1]) {
+          left = parts[i];
+          break;
+        }
+      }
+
+      if (!left) {
+        return right;
+      }
+
+      return `${left}, ${right}`;
     }
+
+    if (parts.length === 1) {
+      return parts[0];
+    }
+
     return rawAddress;
   }
 

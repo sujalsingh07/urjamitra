@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const Listing = require('../models/Listing');
 const User = require('../models/user');
+const smartMeter = require('../services/smartMeterSimulator');
 const jwt = require('jsonwebtoken');
 
 // Middleware to verify token
@@ -49,7 +50,7 @@ const isSameCityOrArea = (userAddress, listingAddress) => {
 // Create a new listing
 router.post('/create', authenticateToken, async (req, res) => {
   try {
-    const { units, pricePerUnit, location } = req.body;
+    const { units, pricePerUnit, location, consumeUnusedEnergy } = req.body;
     
     if (!units || !pricePerUnit || !location?.address) {
       return res.status(400).json({ success: false, message: 'Please provide all required fields' });
@@ -65,6 +66,17 @@ router.post('/create', authenticateToken, async (req, res) => {
 
     // Add listing to user's listings
     await User.findByIdAndUpdate(req.userId, { $push: { listings: listing._id } });
+
+    if (consumeUnusedEnergy) {
+      const updatedMeter = smartMeter.consumeUnusedEnergy(req.userId.toString(), Number(units));
+      const io = req.app.get('io');
+      if (io && updatedMeter) {
+        io.to(`user:${req.userId}`).emit('telemetry:update', {
+          timestamp: new Date().toISOString(),
+          meters: { [req.userId]: updatedMeter }
+        });
+      }
+    }
 
     const io = req.app.get('io');
     if (io) {

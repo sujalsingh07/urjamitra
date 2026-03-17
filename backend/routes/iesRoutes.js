@@ -54,14 +54,14 @@ router.get('/identity', authenticateToken, async (req, res) => {
  */
 router.post('/register-meter', authenticateToken, async (req, res) => {
   try {
-    const user = await User.findById(req.userId).select('name');
+    const user = await User.findById(req.userId).select('name meterSnapshot');
     const meterId = `MTR-${req.userId.toString().substring(0, 8).toUpperCase()}-${Math.floor(Math.random() * 99).toString().padStart(2, '0')}`;
     
     // Determine if user is a seller (has listings)
     const listingCount = await Listing.countDocuments({ seller: req.userId, available: true });
     const isSeller = listingCount > 0;
 
-    smartMeter.registerMeter(req.userId.toString(), meterId, isSeller);
+    smartMeter.registerMeter(req.userId.toString(), meterId, isSeller, user?.meterSnapshot || null);
     const meterState = smartMeter.getMeterState(req.userId.toString());
 
     res.json({ success: true, meterId, meterState });
@@ -74,13 +74,20 @@ router.post('/register-meter', authenticateToken, async (req, res) => {
  * GET /api/ies/telemetry
  * Get current meter telemetry for the authenticated user
  */
-router.get('/telemetry', authenticateToken, (req, res) => {
+router.get('/telemetry', authenticateToken, async (req, res) => {
   const state = smartMeter.getMeterState(req.userId.toString());
   
   if (!state) {
     // Auto-register if not found
     const meterId = `MTR-${req.userId.toString().substring(0, 8).toUpperCase()}-99`;
-    smartMeter.registerMeter(req.userId.toString(), meterId, false);
+    let snapshot = null;
+    try {
+      const user = await User.findById(req.userId).select('meterSnapshot').lean();
+      snapshot = user?.meterSnapshot || null;
+    } catch {
+      snapshot = null;
+    }
+    smartMeter.registerMeter(req.userId.toString(), meterId, false, snapshot);
     return res.json({ success: true, meterState: smartMeter.getMeterState(req.userId.toString()) });
   }
 
@@ -245,10 +252,30 @@ router.get('/trade/:tradeId/status', authenticateToken, (req, res) => {
  */
 async function settleTradeInDB(tradeId, consent, io) {
   try {
-    const listing = await Listing.findById(consent.listingId);
-    if (!listing) return;
+    const requestedUnits = Number(consent.units);
+    if (!Number.isFinite(requestedUnits) || requestedUnits <= 0) return;
 
-    const units = consent.units;
+    // Atomically reserve units at settlement time to avoid stale decrements.
+    const listing = await Listing.findOneAndUpdate(
+      {
+        _id: consent.listingId,
+        available: true,
+        units: { $gte: requestedUnits }
+      },
+      {
+        $inc: { units: -requestedUnits }
+      },
+      {
+        new: true
+      }
+    );
+
+    if (!listing) {
+      console.warn(`IES settle skipped: listing ${consent.listingId} has insufficient units for ${requestedUnits}.`);
+      return;
+    }
+
+    const units = requestedUnits;
     const totalAmount = +(units * listing.pricePerUnit).toFixed(2);
     const CO2_PER_KWH = 0.82;
 
@@ -289,12 +316,21 @@ async function settleTradeInDB(tradeId, consent, io) {
       $push: { transactions: transaction._id }
     });
 
-    // Update listing units
-    const newUnits = listing.units - units;
-    await Listing.findByIdAndUpdate(consent.listingId, {
-      units: Math.max(0, newUnits),
-      available: newUnits > 0
-    });
+    // Keep listing visibility in sync with remaining stock.
+    if (listing.units <= 0) {
+      await Listing.findByIdAndUpdate(consent.listingId, {
+        available: false,
+        units: 0
+      });
+    }
+
+    if (io) {
+      io.emit('listing:changed', {
+        type: 'updated',
+        listingId: String(consent.listingId),
+        remainingUnits: Math.max(0, Number(listing.units || 0))
+      });
+    }
 
     // Fetch updated balances
     const [sellerUser, buyerUser] = await Promise.all([
@@ -316,6 +352,7 @@ async function settleTradeInDB(tradeId, consent, io) {
         units,
         pricePerUnit: listing.pricePerUnit,
         totalAmount,
+        remainingUnits: Math.max(0, Number(listing.units || 0)),
         sellerNewWallet: sellerUser?.wallet,
         buyerNewWallet: buyerUser?.wallet,
         logs,

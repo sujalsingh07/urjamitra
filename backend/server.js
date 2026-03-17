@@ -57,18 +57,26 @@ if (iesRoutes)         app.use("/api/ies",          iesRoutes);
 
 // ── Socket.IO ─────────────────────────────────────────────────────────────────
 const Message     = require("./models/Message");
+const User        = require("./models/user");
 const userSockets = new Map();
 
 io.on("connection", (socket) => {
   console.log("⚡ Socket connected:", socket.id);
 
-  socket.on("register", (userId) => {
+  socket.on("register", async (userId) => {
     if (!userId) return;
     userSockets.set(userId, socket.id);
     socket.join(`user:${userId}`);
     if (!smartMeter.getMeterState(userId)) {
       const meterId = `MTR-${userId.toString().substring(0,8).toUpperCase()}-99`;
-      smartMeter.registerMeter(userId, meterId, false);
+      let snapshot = null;
+      try {
+        const dbUser = await User.findById(userId).select('meterSnapshot').lean();
+        snapshot = dbUser?.meterSnapshot || null;
+      } catch {
+        snapshot = null;
+      }
+      smartMeter.registerMeter(userId, meterId, false, snapshot);
     }
     io.emit("offlineStatus", Array.from(userSockets.keys()));
     const s = smartMeter.getMeterState(userId);

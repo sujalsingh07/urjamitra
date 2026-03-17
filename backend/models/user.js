@@ -18,6 +18,15 @@ const userSchema = new mongoose.Schema({
     latitude: { type: Number, default: null },
     longitude: { type: Number, default: null }
   },
+  meterSnapshot: {
+    meterId: { type: String, default: '' },
+    generationKw: { type: Number, default: 0 },
+    consumptionKw: { type: Number, default: 0 },
+    surplusKw: { type: Number, default: 0 },
+    totalExportToday: { type: Number, default: 0 },
+    totalImportToday: { type: Number, default: 0 },
+    updatedAt: { type: Date, default: null }
+  },
   wallet: { type: Number, default: 0 }, // Balance in rupees
   totalEnergyGenerated: { type: Number, default: 0 }, // in kWh
   totalEnergyShared: { type: Number, default: 0 }, // in kWh

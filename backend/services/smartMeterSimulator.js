@@ -7,6 +7,7 @@
 
 
 const METER_TICK_INTERVAL = 5000; // 5 seconds
+const User = require('../models/user');
 
 // Auto-listing for surplus energy
 const { autoCreateListing } = require('./autoListing');
@@ -16,6 +17,7 @@ const meterLogs = new Map();
 
 // Active meter states: { userId: { meterId, generationKw, consumptionKw, surplusKw, totalExportToday, totalImportToday } }
 const meterStates = new Map();
+let ticksSincePersist = 0;
 
 function hash01(input) {
   const str = String(input || '');
@@ -44,20 +46,33 @@ function buildUserProfile(userId, isSeller) {
  * Register a user's meter with initial simulation parameters.
  * Called when a user logs in or when a listing is created.
  */
-function registerMeter(userId, meterId, isSeller = false) {
+function registerMeter(userId, meterId, isSeller = false, persistedSnapshot = null) {
   if (meterStates.has(userId)) return; // Already registered
 
   const profile = buildUserProfile(userId, isSeller);
-  const baseGeneration = profile.baseGenerationKw;
-  const baseConsumption = profile.baseConsumptionKw;
+  const snapshot = persistedSnapshot && typeof persistedSnapshot === 'object'
+    ? persistedSnapshot
+    : null;
+  const baseGeneration = Number.isFinite(Number(snapshot?.generationKw))
+    ? Number(snapshot.generationKw)
+    : profile.baseGenerationKw;
+  const baseConsumption = Number.isFinite(Number(snapshot?.consumptionKw))
+    ? Number(snapshot.consumptionKw)
+    : profile.baseConsumptionKw;
+  const totalExportToday = Number.isFinite(Number(snapshot?.totalExportToday))
+    ? Number(snapshot.totalExportToday)
+    : hash01(`${userId}:exp`) * 8;
+  const totalImportToday = Number.isFinite(Number(snapshot?.totalImportToday))
+    ? Number(snapshot.totalImportToday)
+    : hash01(`${userId}:imp`) * 5;
 
   meterStates.set(userId, {
-    meterId: meterId || `MTR-${userId.toString().substring(0, 8).toUpperCase()}`,
+    meterId: snapshot?.meterId || meterId || `MTR-${userId.toString().substring(0, 8).toUpperCase()}`,
     generationKw: baseGeneration,
     consumptionKw: baseConsumption,
     surplusKw: +(baseGeneration - baseConsumption).toFixed(2),
-    totalExportToday: hash01(`${userId}:exp`) * 8,
-    totalImportToday: hash01(`${userId}:imp`) * 5,
+    totalExportToday: +Number(totalExportToday).toFixed(4),
+    totalImportToday: +Number(totalImportToday).toFixed(4),
     profile,
     lastUpdated: new Date()
   });
@@ -65,6 +80,54 @@ function registerMeter(userId, meterId, isSeller = false) {
   if (!meterLogs.has(meterId || userId)) {
     meterLogs.set(meterId || userId, []);
   }
+}
+
+async function persistMeterSnapshots() {
+  if (meterStates.size === 0) return;
+
+  const now = new Date();
+  const ops = Array.from(meterStates.entries()).map(([userId, state]) => ({
+    updateOne: {
+      filter: { _id: userId },
+      update: {
+        $set: {
+          meterSnapshot: {
+            meterId: state.meterId || '',
+            generationKw: Number(state.generationKw || 0),
+            consumptionKw: Number(state.consumptionKw || 0),
+            surplusKw: Number(state.surplusKw || 0),
+            totalExportToday: Number(state.totalExportToday || 0),
+            totalImportToday: Number(state.totalImportToday || 0),
+            updatedAt: now
+          }
+        }
+      }
+    }
+  }));
+
+  await User.bulkWrite(ops, { ordered: false });
+}
+
+function consumeUnusedEnergy(userId, unitsToConsume) {
+  const state = meterStates.get(userId);
+  if (!state) return null;
+
+  const requested = Number(unitsToConsume || 0);
+  if (!Number.isFinite(requested) || requested <= 0) return state;
+
+  const currentUnused = Math.max(0, Number(state.totalExportToday || 0) - Number(state.totalImportToday || 0));
+  const consumed = Math.min(currentUnused, requested);
+  const nextExport = Math.max(Number(state.totalImportToday || 0), Number(state.totalExportToday || 0) - consumed);
+
+  const nextState = {
+    ...state,
+    totalExportToday: +nextExport.toFixed(4),
+    lastUpdated: new Date()
+  };
+
+  meterStates.set(userId, nextState);
+  persistMeterSnapshots().catch(() => {});
+  return nextState;
 }
 
 /**
@@ -134,6 +197,12 @@ function tickMeters() {
     });
     // Keep only last 500 records per meter
     if (log.length > 500) log.splice(0, log.length - 500);
+  }
+
+  ticksSincePersist += 1;
+  if (ticksSincePersist >= 6) {
+    ticksSincePersist = 0;
+    persistMeterSnapshots().catch(() => {});
   }
 }
 
@@ -232,6 +301,7 @@ module.exports = {
   getAllMeterStates,
   startSimulator,
   seedMeterForDemo,
+  consumeUnusedEnergy,
   meterStates,
   meterLogs
 };

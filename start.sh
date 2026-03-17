@@ -11,6 +11,14 @@ echo ""
 echo -e "${YELLOW}⚡ Urjamitra P2P Energy Marketplace${NC}"
 echo ""
 
+# Preflight checks (Node version, env files, required ports)
+echo -e "${BLUE}🧪 Running preflight checks...${NC}"
+cd "$ROOT" && node scripts/preflight.js || {
+	echo -e "${RED}❌ Preflight failed. Fix the above issue and retry.${NC}"
+	exit 1
+}
+echo -e "${GREEN}✅ Preflight passed${NC}"
+
 # Install deps
 echo -e "${BLUE}📦 Installing backend dependencies...${NC}"
 cd "$ROOT/backend" && npm install --legacy-peer-deps --silent

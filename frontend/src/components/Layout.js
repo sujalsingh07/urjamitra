@@ -9,6 +9,7 @@ export default function Layout({ children }) {
   const [iesConsent, setIesConsent] = useState(null);
   const [iesConsentBusy, setIesConsentBusy] = useState(false);
   const [iesConsentError, setIesConsentError] = useState('');
+  const handledConsentRef = useRef(new Set());
 
   // ── notification state ─────────────────────────────────────────────────────
   const [notifications, setNotifications]   = useState([]);
@@ -137,6 +138,8 @@ export default function Layout({ children }) {
 
     const onConnect = () => socket.emit('register', currentUserId);
     const onConsent = (payload) => {
+      if (!payload?.consentId) return;
+      if (handledConsentRef.current.has(payload.consentId)) return;
       setIesConsentError('');
       setIesConsent(payload);
     };
@@ -152,16 +155,26 @@ export default function Layout({ children }) {
 
   const handleIesConsentDecision = async (decision) => {
     if (!iesConsent?.consentId) return;
+    const snapshot = iesConsent;
+    const consentId = snapshot.consentId;
+
+    // Close immediately after action so the popup does not feel stuck.
+    handledConsentRef.current.add(consentId);
+    setIesConsent(null);
     setIesConsentBusy(true);
     setIesConsentError('');
+
     try {
-      const res = await api.approveConsent(iesConsent.consentId, decision);
+      const res = await api.approveConsent(consentId, decision);
       if (!res?.success) {
+        handledConsentRef.current.delete(consentId);
+        setIesConsent(snapshot);
         setIesConsentError(res?.message || 'Unable to submit consent decision.');
         return;
       }
-      setIesConsent(null);
     } catch (err) {
+      handledConsentRef.current.delete(consentId);
+      setIesConsent(snapshot);
       setIesConsentError(err?.response?.data?.message || 'Consent request failed.');
     } finally {
       setIesConsentBusy(false);

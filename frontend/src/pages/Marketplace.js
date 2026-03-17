@@ -96,6 +96,7 @@ export default function Marketplace() {
   const [tradeReceipt, setTradeReceipt] = useState(null);
   const [pendingConsent, setPendingConsent] = useState(null);
   const [walletBalance, setWalletBalance] = useState(0);
+  const [consumeUnusedOnPost, setConsumeUnusedOnPost] = useState(false);
 
   useEffect(() => { fetchListings(); }, []);
 
@@ -118,13 +119,34 @@ export default function Marketplace() {
       setShowListModal(true);
       const units = Number(location.state?.prefillUnits || 0);
       if (units > 0) {
+        setConsumeUnusedOnPost(true);
         setListingForm((prev) => ({
           ...prev,
           units: units.toFixed(2)
         }));
+      } else {
+        setConsumeUnusedOnPost(false);
       }
+    } else {
+      setConsumeUnusedOnPost(false);
     }
   }, [location.state]);
+
+  useEffect(() => {
+    const listingId = location.state?.openListingId;
+    if (!listingId || loading) return;
+
+    const target = listings.find((l) => String(l._id) === String(listingId));
+    if (target) {
+      setViewMode('all');
+      setFilter('all');
+      openBuyModal(target);
+    } else {
+      setError('That listing is no longer available.');
+    }
+
+    navigate(location.pathname, { replace: true, state: {} });
+  }, [location.state, listings, loading, navigate, location.pathname]);
 
   useEffect(() => {
     const socket = window.__socket;
@@ -179,6 +201,19 @@ export default function Marketplace() {
 
     const onSettlement = (payload) => {
       if (!activeTradeId || payload?.tradeId !== activeTradeId) return;
+      setTradeLogs((prev) => [
+        ...prev,
+        {
+          time: new Date().toISOString(),
+          level: 'success',
+          event: `[DISCOM] ✅ Trade approved and settled for ${payload?.units ?? buyUnits} kWh.`,
+        },
+        {
+          time: new Date().toISOString(),
+          level: 'success',
+          event: `[IES] Settlement completed. Txn Hash: ${payload?.txnHash || 'N/A'}`,
+        },
+      ]);
       setTradeReceipt(payload);
       setTradePhase('settled');
       setBuyLoading(false);
@@ -292,6 +327,7 @@ export default function Marketplace() {
       const payload = {
         units: parseFloat(listingForm.units),
         pricePerUnit: parseFloat(listingForm.pricePerUnit),
+        consumeUnusedEnergy: consumeUnusedOnPost,
         location: {
           address: savedAddress,
           latitude: Number.isFinite(savedLatitude) ? savedLatitude : undefined,
@@ -304,6 +340,7 @@ export default function Marketplace() {
       if (res.success) {
         setShowListModal(false);
         setListingForm({ units: '', pricePerUnit: '' });
+        setConsumeUnusedOnPost(false);
         setDone(true);
         setTimeout(() => setDone(false), 3000);
         fetchListings();
@@ -692,7 +729,7 @@ export default function Marketplace() {
                       ) : !canAfford ? (
                         <p style={{ margin: 0, fontSize: 11, color: '#b91c1c', fontWeight: 700 }}>⚠ Insufficient balance — you need ₹{(total - walletBalance).toFixed(0)} more</p>
                       ) : (
-                        <p style={{ margin: 0, fontSize: 11, color: '#16a34a', fontWeight: 600 }}>Amount held from your wallet · released immediately if seller declines</p>
+                        <p style={{ margin: 0, fontSize: 11, color: '#16a34a', fontWeight: 600 }}>Amount is deducted only after consent + DISCOM verification settles the trade</p>
                       )}
                     </div>
                   );
