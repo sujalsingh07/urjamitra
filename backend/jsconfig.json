@@ -6,6 +6,19 @@
     "allowJs": true,
     "strict": false
   },
-  "exclude": ["node_modules", "**/*.test.js"],
-  "include": ["**/*.js"]
+  "exclude": [
+    "node_modules",
+    "**/*.test.js",
+    "build",
+    "dist",
+    "routes/demoRoutes.js"
+  ],
+  "include": [
+    "./server.js",
+    "./test-server.js",
+    "./controllers/*.js",
+    "./models/*.js",
+    "./routes/*.js",
+    "./services/*.js"
+  ]
 }

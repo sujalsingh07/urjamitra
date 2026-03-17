@@ -1,7 +1,8 @@
 # ⚡ Urjamitra — Quick Start (2 commands)
 
 ## Requirements
-- Node.js v18+ installed  →  check: `node --version`
+
+- Node.js v18+ installed → check: `node --version`
 - Two terminal windows
 
 ---
@@ -35,9 +36,9 @@ npm start
 
 ## Troubleshooting
 
-| Error | Fix |
-|-------|-----|
-| `Could not reach server` | Backend not running — start it with `node server.js` in the backend folder |
-| `npm install` fails | Run `npm install --legacy-peer-deps` |
-| Port 5001 in use | Edit `backend/.env` → change `PORT=5001` to `PORT=5002`, and `frontend/.env` → change `5001` to `5002` |
-| Frontend shows blank page | Delete `frontend/node_modules` and run `npm install` again |
+| Error                     | Fix                                                                                                    |
+| ------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `Could not reach server`  | Backend not running — start it with `node server.js` in the backend folder                             |
+| `npm install` fails       | Run `npm install --legacy-peer-deps`                                                                   |
+| Port 5001 in use          | Edit `backend/.env` → change `PORT=5001` to `PORT=5002`, and `frontend/.env` → change `5001` to `5002` |
+| Frontend shows blank page | Delete `frontend/node_modules` and run `npm install` again                                             |

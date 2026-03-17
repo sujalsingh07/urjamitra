@@ -112,6 +112,30 @@ const fallbackWeekly = [
   { d: 'S', g: 0, s: 0 },
 ];
 
+const formatSystemLocation = (address, location) => {
+  const rawAddress = String(address || '').trim();
+  if (rawAddress && rawAddress.toLowerCase() !== 'campus') {
+    const parts = rawAddress.split(',').map((p) => p.trim()).filter(Boolean);
+    if (parts.length >= 2) {
+      // Prefer the last meaningful two chunks (usually city/state for long geocoded addresses)
+      let second = parts[parts.length - 2];
+      let first = parts[parts.length - 3] || parts[0];
+      if (/\d/.test(second) && parts.length >= 3) second = parts[parts.length - 3];
+      if (/\d/.test(first) && parts.length >= 4) first = parts[parts.length - 4];
+      return `${first}, ${second}`;
+    }
+    return rawAddress;
+  }
+
+  const lat = Number(location?.latitude);
+  const lng = Number(location?.longitude);
+  if (Number.isFinite(lat) && Number.isFinite(lng)) {
+    return `${lat.toFixed(3)}, ${lng.toFixed(3)}`;
+  }
+
+  return 'Set location in Profile';
+};
+
 function SunIcon({ size = 72 }) {
   const r = size / 2;
   const numRays = 12;
@@ -394,6 +418,10 @@ export default function Dashboard() {
   const totalEarnings = Number(userProfile?.totalEarnings || 0);
   const co2SavedRaw = Number(userProfile?.co2Saved || 0);
   const co2Saved = co2SavedRaw > 0 ? co2SavedRaw : Number((energyShared * 0.82).toFixed(1));
+  const systemLocationLabel = formatSystemLocation(
+    userProfile?.address || localUser?.address,
+    userProfile?.location || localUser?.location
+  );
   const unusedEnergyKwh = Math.max(
     0,
     Number(liveMeter?.totalExportToday || 0) - Number(liveMeter?.totalImportToday || 0)
@@ -449,7 +477,7 @@ export default function Dashboard() {
               </h1>
               <div style={{ display: 'flex', alignItems: 'center', gap: 7, justifyContent: window.innerWidth <= 600 ? 'center' : 'flex-start' }}>
                 <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#22c55e', animation: 'blink 2.5s infinite', boxShadow: '0 0 8px #22c55e' }} />
-                <span style={{ fontSize: 13, color: '#15803d', fontWeight: 800 }}>System live · Pune, Maharashtra</span>
+                <span style={{ fontSize: 13, color: '#15803d', fontWeight: 800 }}>System live · {systemLocationLabel}</span>
               </div>
             </div>
             <div style={{ opacity: mounted ? 1 : 0, transition: 'opacity 0.7s ease 0.2s' }}><SunIcon size={56} /></div>

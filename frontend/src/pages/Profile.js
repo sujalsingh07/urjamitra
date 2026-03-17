@@ -127,6 +127,7 @@ export default function Profile() {
   const [locationStatus, setLocationStatus] = useState('');
   const [locationLoading, setLocationLoading] = useState(false);
   const [coordinates, setCoordinates] = useState({ latitude: null, longitude: null });
+  const accountEmail = user?.email || '';
 
   useEffect(() => {
     const userStr = localStorage.getItem('user');
@@ -301,6 +302,26 @@ export default function Profile() {
             )}
 
             <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
+              <div>
+                <label style={{ display: 'block', marginBottom: 9, color: '#92400e', fontWeight: 700, fontSize: 14 }}>
+                  Email Address
+                </label>
+                <input
+                  type="email"
+                  value={accountEmail}
+                  className="profile-input"
+                  readOnly
+                  disabled
+                  placeholder="Email used to sign up"
+                  style={{
+                    background: 'rgba(255, 251, 235, 0.85)',
+                    color: '#78350f',
+                    cursor: 'not-allowed',
+                    opacity: 1
+                  }}
+                />
+              </div>
+
               <div>
                 <label style={{ display: 'block', marginBottom: 9, color: '#92400e', fontWeight: 700, fontSize: 14 }}>Full Name</label>
                 <input
