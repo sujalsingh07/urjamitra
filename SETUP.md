@@ -33,18 +33,6 @@ npm start
 
 ---
 
-## Run the Demo
-
-1. On the login page, scroll down → click **"🎬 Launch Demo Mode"**
-2. Open `localhost:3000` in a **second browser tab**
-3. **Tab 1** → click "☀️ Login as Arun (Seller)"
-4. **Tab 2** → click "🏠 Login as Lakshmi (Buyer)"
-5. **Tab 2** → Sidebar → 🔗 P2P Trade → select listing → 5 units → Initiate
-6. **Tab 1** → P2P Trade page → Approve consent popup
-7. Watch the IES console complete the trade live! 🎉
-
----
-
 ## Troubleshooting
 
 | Error | Fix |

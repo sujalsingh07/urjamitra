@@ -60,66 +60,6 @@ const CSS = `
   .gradient-btn:active:not(:disabled) { transform: translateY(0) scale(0.98); }
   .gradient-btn:disabled { background: #fef3c7; color: #d97706; cursor: not-allowed; box-shadow: none; }
 
-  @keyframes demoPulse { 0%,100%{box-shadow:0 0 0 0 rgba(34,197,94,0.4)} 50%{box-shadow:0 0 0 8px rgba(34,197,94,0)} }
-  .demo-btn {
-    width: 100%;
-    background: linear-gradient(135deg, #0f172a, #1e293b);
-    color: #22c55e;
-    border: 1.5px solid rgba(34,197,94,0.4);
-    border-radius: 16px;
-    padding: 14px;
-    font-weight: 800;
-    font-size: 14px;
-    letter-spacing: -0.2px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    transition: all 0.3s cubic-bezier(0.16,1,0.3,1);
-    font-family: inherit;
-  }
-  .demo-btn:hover:not(:disabled) {
-    background: linear-gradient(135deg, #1e293b, #0f172a);
-    border-color: #22c55e;
-    transform: translateY(-2px);
-    box-shadow: 0 8px 24px rgba(34,197,94,0.2);
-    animation: demoPulse 2s ease-in-out infinite;
-  }
-  .demo-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-
-  .demo-panel {
-    background: #0f172a;
-    border: 1px solid rgba(34,197,94,0.25);
-    border-radius: 20px;
-    padding: 24px;
-    margin-top: 16px;
-  }
-  .demo-user-card {
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 14px;
-    padding: 16px;
-    margin-bottom: 12px;
-    transition: border-color 0.2s;
-  }
-  .demo-user-card:hover { border-color: rgba(34,197,94,0.4); }
-  .demo-login-btn {
-    width: 100%;
-    padding: 12px;
-    border-radius: 10px;
-    border: none;
-    font-weight: 800;
-    font-size: 13px;
-    cursor: pointer;
-    margin-top: 10px;
-    font-family: inherit;
-    transition: all 0.2s;
-  }
-  .demo-login-btn.seller { background: #22c55e; color: #000; }
-  .demo-login-btn.seller:hover { background: #16a34a; }
-  .demo-login-btn.buyer  { background: #3b82f6; color: #fff; }
-  .demo-login-btn.buyer:hover  { background: #2563eb; }
 `;
 
 export default function Login() {
@@ -225,45 +165,6 @@ export default function Login() {
     } catch (err) {
       setError(err.response?.data?.message || 'Something went wrong. Please try again.');
     } finally { setLoading(false); }
-  };
-
-  // ── Demo Mode ─────────────────────────────────────────────────────────────
-  const [demoLoading, setDemoLoading] = useState(false);
-  const [demoReady, setDemoReady]     = useState(false);
-  const [demoUsers, setDemoUsers]     = useState(null);
-  const [showDemo, setShowDemo]       = useState(false);
-
-  const seedDemo = async () => {
-    setDemoLoading(true);
-    setError('');
-    try {
-      const apiBase = process.env.REACT_APP_API_BASE_URL || 'http://localhost:5001/api';
-      const res = await axios.post(`${apiBase}/auth/demo-seed`);
-      if (res.data.success) {
-        setDemoUsers(res.data.users);
-        setDemoReady(true);
-      } else {
-        setError(res.data.message || 'Demo seed failed');
-      }
-    } catch (err) {
-      setError('❌ Backend not running. Open a terminal → cd backend → node server.js');
-    } finally { setDemoLoading(false); }
-  };
-
-  const loginAs = (userData) => {
-    localStorage.setItem('token', userData.token);
-    localStorage.setItem('user', JSON.stringify(userData.user));
-    if (window.__socket) {
-      window.__socket.emit('register', userData.user._id);
-      if (userData.role === 'seller') {
-        window.__socket.emit('meter:setProsumer', {
-          userId: userData.user._id,
-          generationKw: 8,
-          consumptionKw: 3,
-        });
-      }
-    }
-    navigate('/dashboard');
   };
 
   const particles = [
@@ -454,91 +355,6 @@ export default function Login() {
         ) : null}
 
         <p style={{ textAlign: 'center', fontSize: 12, color: '#a16207', marginTop: 20, marginBottom: 0, fontWeight: 600 }}>Your neighborhood energy community 🏘️</p>
-
-        {/* ── Demo Mode Panel ── */}
-        <div style={{ marginTop: 24, borderTop: '1px solid rgba(245,158,11,0.2)', paddingTop: 20 }}>
-          <button
-            className="demo-btn"
-            onClick={() => { setShowDemo(d => !d); if (!demoReady && !showDemo) seedDemo(); }}
-            disabled={demoLoading}
-          >
-            {demoLoading
-              ? <><span style={{ width: 14, height: 14, border: '2px solid rgba(34,197,94,0.3)', borderTopColor: '#22c55e', borderRadius: '50%', display: 'inline-block', animation: 'sunSpin 0.8s linear infinite' }} /> Seeding demo accounts...</>
-              : demoReady
-                ? (showDemo ? '▲ Hide Demo Panel' : '🎬 Show Demo Login')
-                : '🎬 Launch Demo Mode'
-            }
-          </button>
-
-          {showDemo && demoReady && demoUsers && (
-            <div className="demo-panel">
-              <div style={{ fontFamily: 'monospace', fontSize: 11, color: '#22c55e', marginBottom: 16, letterSpacing: 0.5 }}>
-                ✅ DEMO ACCOUNTS READY · METERS SEEDED AT 8 kW SOLAR
-              </div>
-
-              <div style={{ fontSize: 11, color: '#64748b', marginBottom: 14, lineHeight: 1.6 }}>
-                Open this page in <strong style={{ color: '#94a3b8' }}>two browser tabs</strong>.<br />
-                Log in as Arun in Tab 1, Lakshmi in Tab 2.
-              </div>
-
-              {demoUsers.map((u) => (
-                <div key={u.email} className="demo-user-card">
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
-                    <div>
-                      <div style={{ fontSize: 15, fontWeight: 800, color: '#f1f5f9' }}>{u.name}</div>
-                      <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
-                        {u.role === 'seller' ? '☀️ Prosumer · Seller' : '🏠 Consumer · Buyer'}
-                      </div>
-                    </div>
-                    <div style={{
-                      background: u.role === 'seller' ? 'rgba(34,197,94,0.1)' : 'rgba(59,130,246,0.1)',
-                      border: `1px solid ${u.role === 'seller' ? 'rgba(34,197,94,0.3)' : 'rgba(59,130,246,0.3)'}`,
-                      borderRadius: 6, padding: '3px 8px', fontSize: 12, fontWeight: 700,
-                      color: u.role === 'seller' ? '#22c55e' : '#3b82f6'
-                    }}>
-                      ₹{u.wallet}
-                    </div>
-                  </div>
-
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, fontSize: 11, marginBottom: 6 }}>
-                    <div style={{ background: 'rgba(255,255,255,0.04)', borderRadius: 6, padding: '6px 8px' }}>
-                      <div style={{ color: '#475569' }}>Email</div>
-                      <div style={{ color: '#94a3b8', fontFamily: 'monospace', marginTop: 1 }}>{u.email}</div>
-                    </div>
-                    <div style={{ background: 'rgba(255,255,255,0.04)', borderRadius: 6, padding: '6px 8px' }}>
-                      <div style={{ color: '#475569' }}>Password</div>
-                      <div style={{ color: '#94a3b8', fontFamily: 'monospace', marginTop: 1 }}>{u.password}</div>
-                    </div>
-                  </div>
-
-                  {u.role === 'seller' && (
-                    <div style={{ background: 'rgba(234,179,8,0.08)', border: '1px solid rgba(234,179,8,0.2)', borderRadius: 8, padding: '8px 10px', fontSize: 11, color: '#ca8a04', marginBottom: 6 }}>
-                      ⚡ Meter seeded: 8 kW generation · 5 kWh listing @ ₹5/kWh · DISCOM logs pre-loaded
-                    </div>
-                  )}
-
-                  <button
-                    className={`demo-login-btn ${u.role}`}
-                    onClick={() => loginAs(u)}
-                  >
-                    {u.role === 'seller'
-                      ? `☀️ Login as ${u.name} (Seller) — Tab 1`
-                      : `🏠 Login as ${u.name} (Buyer) — Tab 2`}
-                  </button>
-                </div>
-              ))}
-
-              <div style={{ marginTop: 12, padding: '12px 14px', background: 'rgba(255,255,255,0.03)', borderRadius: 10, fontSize: 11, color: '#64748b', lineHeight: 2 }}>
-                <div style={{ color: '#94a3b8', fontWeight: 700, marginBottom: 4 }}>📋 After logging in:</div>
-                <div>1. <strong style={{ color: '#f1f5f9' }}>Arun (Tab 1)</strong> → Dashboard shows 8 kW solar live</div>
-                <div>2. <strong style={{ color: '#f1f5f9' }}>Lakshmi (Tab 2)</strong> → Sidebar → 🔗 P2P Trade</div>
-                <div>3. Select Arun's listing → Enter 5 units → Initiate Trade</div>
-                <div>4. <strong style={{ color: '#f1f5f9' }}>Arun (Tab 1)</strong> → P2P Trade page → Approve consent</div>
-                <div>5. Watch IES console → DISCOM verify → Settlement! 🎉</div>
-              </div>
-            </div>
-          )}
-        </div>
       </div>
     </div>
   );

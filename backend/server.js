@@ -34,7 +34,6 @@ const listingRoutes     = tryLoad("listingRoutes",     "./routes/listingRoutes")
 const transactionRoutes = tryLoad("transactionRoutes", "./routes/transactionRoutes");
 const messageRoutes     = tryLoad("messageRoutes",     "./routes/messageRoutes");
 const iesRoutes         = tryLoad("iesRoutes",         "./routes/iesRoutes");
-const demoRoutes        = tryLoad("demoRoutes",        "./routes/demoRoutes");
 
 // ── App ───────────────────────────────────────────────────────────────────────
 const app    = express();
@@ -55,7 +54,6 @@ if (listingRoutes)     app.use("/api/listings",     listingRoutes);
 if (transactionRoutes) app.use("/api/transactions", transactionRoutes);
 if (messageRoutes)     app.use("/api/messages",     messageRoutes);
 if (iesRoutes)         app.use("/api/ies",          iesRoutes);
-if (demoRoutes)        app.use("/api/auth",         demoRoutes);
 
 // ── Socket.IO ─────────────────────────────────────────────────────────────────
 const Message     = require("./models/Message");
@@ -143,7 +141,6 @@ connectDB()
       console.log(`║   Socket →  ws://localhost:${PORT}                ║`);
       console.log("╠══════════════════════════════════════════════════╣");
       console.log("║   Open http://localhost:3000                     ║");
-      console.log("║   Scroll down → 🎬 Launch Demo Mode              ║");
       console.log("╚══════════════════════════════════════════════════╝");
       console.log("");
     });
