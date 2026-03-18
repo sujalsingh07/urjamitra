@@ -390,6 +390,23 @@ export default function Dashboard() {
     }
   }, [localUser]);
 
+  const loadLiveTelemetry = useCallback(async () => {
+    try {
+      const token = localStorage.getItem('token');
+      if (!token) return;
+      const API_BASE = process.env.REACT_APP_API_BASE_URL || 'http://localhost:5001/api';
+      const t = await fetch(`${API_BASE}/ies/telemetry`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const td = await t.json();
+      if (td.success && td.meterState) {
+        applyLiveMeter(td.meterState);
+      }
+    } catch {
+      // Keep socket-driven state if polling fails.
+    }
+  }, [applyLiveMeter]);
+
   useEffect(() => {
     if (!meterCacheKey) return;
     try {
@@ -419,13 +436,10 @@ export default function Dashboard() {
           const r = await fetch(`${API_BASE}/ies/identity`, { headers: { Authorization: `Bearer ${token}` } });
           const d = await r.json();
           if (d.success) setIesId(d.iesId);
-
-          // Load initial telemetry
-          const t = await fetch(`${API_BASE}/ies/telemetry`, { headers: { Authorization: `Bearer ${token}` } });
-          const td = await t.json();
-          if (td.success && td.meterState) applyLiveMeter(td.meterState);
         }
       } catch (_) {}
+
+      await loadLiveTelemetry();
     };
 
     loadDashboardData();
@@ -447,16 +461,17 @@ export default function Dashboard() {
         socket.off('telemetry:init', handleInit);
       };
     }
-  }, [applyLiveMeter, loadRecentActivity, loadProfileAndCommunity, currentUserId]);
+  }, [applyLiveMeter, loadRecentActivity, loadProfileAndCommunity, currentUserId, loadLiveTelemetry]);
 
   useEffect(() => {
     const id = setInterval(() => {
       loadProfileAndCommunity();
       loadRecentActivity();
-    }, 20000);
+      loadLiveTelemetry();
+    }, 10000);
 
     return () => clearInterval(id);
-  }, [loadRecentActivity, loadProfileAndCommunity]);
+  }, [loadRecentActivity, loadProfileAndCommunity, loadLiveTelemetry]);
 
   const userName = userProfile?.name || localUser.name || 'Arjun';
   const energyShared = Number(userProfile?.totalEnergyShared || 0);
@@ -469,9 +484,20 @@ export default function Dashboard() {
     userProfile?.address || localUser?.address,
     userProfile?.location || localUser?.location
   );
-  const unusedEnergyKwh = Math.max(
+  const exportedToday = Number(liveMeter?.totalExportToday);
+  const importedToday = Number(liveMeter?.totalImportToday);
+  const liveSurplusKw = Number(liveMeter?.surplusKw);
+  const hasDailyTotals = Number.isFinite(exportedToday) && Number.isFinite(importedToday);
+  const liveUnusedKwh = Number.isFinite(liveSurplusKw) ? Math.max(0, liveSurplusKw) : 0;
+  const dailyUnusedKwh = hasDailyTotals ? Math.max(0, exportedToday - importedToday) : 0;
+  // Keep Unused Energy synced with realtime surplus; fallback to daily net if live value is unavailable.
+  const unusedEnergyKwh = Number.isFinite(liveSurplusKw) ? liveUnusedKwh : dailyUnusedKwh;
+  const unusedEnergyDisplay = unusedEnergyKwh >= 1
+    ? unusedEnergyKwh.toFixed(2)
+    : unusedEnergyKwh.toFixed(3);
+  const unusedEnergyPct = Math.max(
     0,
-    Number(liveMeter?.totalExportToday || 0) - Number(liveMeter?.totalImportToday || 0)
+    Math.min(100, Math.round((unusedEnergyKwh / Math.max(1, Number(liveMeter?.generationKw || 1))) * 100))
   );
   const safeCommunitySize = Number.isFinite(Number(communityStats.communitySize)) && Number(communityStats.communitySize) > 0
     ? Number(communityStats.communitySize)
@@ -587,24 +613,31 @@ export default function Dashboard() {
             )}
 
             {/* ── Unused Energy Quick Action ── */}
-            {liveMeter && unusedEnergyKwh > 0.01 && (
+            {liveMeter && (
               <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid rgba(245,158,11,0.15)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
                 <div>
                   <p style={{ margin: '0 0 4px', fontSize: 11, color: '#92740a', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1.5 }}>⚡ Unused Energy</p>
                   <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-                    <span style={{ fontSize: 24, fontWeight: 900, color: '#b45309', letterSpacing: -0.5 }}>{unusedEnergyKwh.toFixed(2)}</span>
+                    <span style={{ fontSize: 24, fontWeight: 900, color: '#b45309', letterSpacing: -0.5 }}>{unusedEnergyDisplay}</span>
                     <span style={{ fontSize: 12, color: '#b45309', fontWeight: 700 }}>kWh available today</span>
                   </div>
+                  <div style={{ marginTop: 8, width: 180, height: 5, background: 'rgba(0,0,0,0.08)', borderRadius: 99, overflow: 'hidden' }}>
+                    <div style={{ width: `${unusedEnergyPct}%`, height: '100%', background: 'linear-gradient(90deg,#f59e0b,#84cc16)', borderRadius: 99, transition: 'width 0.8s ease' }} />
+                  </div>
+                  {unusedEnergyKwh <= 0.005 && (
+                    <p style={{ margin: '6px 0 0', fontSize: 11, color: '#a16207', fontWeight: 600 }}>No unused energy right now. Check again with the next meter update.</p>
+                  )}
                 </div>
                 <button
+                  disabled={unusedEnergyKwh <= 0.005}
                   onClick={() => navigate('/marketplace', {
                     state: {
                       openListModal: true,
-                      prefillUnits: Number(unusedEnergyKwh.toFixed(2))
+                      prefillUnits: Number(unusedEnergyKwh.toFixed(3))
                     }
                   })}
                   className="gradient-btn"
-                  style={{ fontSize: 12, padding: '10px 20px', whiteSpace: 'nowrap' }}
+                  style={{ fontSize: 12, padding: '10px 20px', whiteSpace: 'nowrap', opacity: unusedEnergyKwh <= 0.005 ? 0.55 : 1, cursor: unusedEnergyKwh <= 0.005 ? 'not-allowed' : 'pointer' }}
                 >
                   <span style={{ fontSize: 14 }}>💰</span> Sell Now
                 </button>
